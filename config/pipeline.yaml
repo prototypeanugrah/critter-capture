@@ -25,8 +25,8 @@ base:
     use_batch_norm: true
     use_spectral_norm: false
   training:
-    epochs: 5
-    batch_size: 32
+    epochs: 50
+    batch_size: 128
     gradient_clip_norm: 5.0
     amp: true
     early_stopping_patience: 5
@@ -41,9 +41,9 @@ base:
     seed: 42
     device: cuda
   tuning:
-    enabled: true
-    num_samples: 8
-    max_epochs: 10
+    enabled: false
+    num_samples: 16
+    max_epochs: 20
     grace_period: 3
     metric: val_accuracy
     mode: max
@@ -53,7 +53,7 @@ base:
       weight_decay:
         loguniform: [1.0e-06, 0.0005]
       dropout:
-        uniform: [0.2, 0.5]
+        uniform: [0.1, 0.5]
       batch_size:
         choice: [32, 64, 128, 256]
     resources_per_trial:

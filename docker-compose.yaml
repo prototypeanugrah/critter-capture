@@ -1,0 +1,108 @@
+version: "3.9"
+
+services:
+  mlflow:
+    build: .
+    container_name: critter_mlflow
+    entrypoint: ["mlflow"]
+    command:
+      - server
+      - --backend-store-uri
+      - sqlite:////app/mlruns/mlflow.db
+      - --default-artifact-root
+      - file:///app/mlruns/artifacts
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"
+    environment:
+      - MLFLOW_TRACKING_URI=http://0.0.0.0:5000
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlruns:/app/mlruns
+
+  trainer:
+    build: .
+    entrypoint: ["python", "-m", "critter_capture.cli"]
+    command: ["train", "--config", "config/pipeline.yaml", "--env", "docker"]
+    depends_on:
+      - mlflow
+    environment:
+      - CONFIG_ENV=docker
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    volumes:
+      - ./:/app
+      - mlruns:/app/mlruns
+
+  deployer:
+    build: .
+    entrypoint: ["python", "-m", "critter_capture.cli"]
+    command: ["deploy", "--config", "config/pipeline.yaml", "--env", "docker"]
+    depends_on:
+      - mlflow
+    environment:
+      - CONFIG_ENV=docker
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    volumes:
+      - ./:/app
+      - mlruns:/app/mlruns
+
+  inference:
+    build: .
+    entrypoint: ["python", "-m", "critter_capture.cli"]
+    command: ["inference", "--config", "config/pipeline.yaml", "--env", "docker"]
+    depends_on:
+      - mlflow
+      - model-server
+    environment:
+      - CONFIG_ENV=docker
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    volumes:
+      - ./:/app
+      - mlruns:/app/mlruns
+
+  model-server:
+    build: .
+    entrypoint: ["mlflow"]
+    command:
+      - models
+      - serve
+      - -m
+      - models:/AnimalSpeciesClassifier/Production
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5001"
+      - --no-conda
+    depends_on:
+      - mlflow
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    ports:
+      - "5001:5001"
+    volumes:
+      - mlruns:/app/mlruns
+
+  streamlit:
+    build: .
+    entrypoint: ["streamlit"]
+    command:
+      - run
+      - app/streamlit_app.py
+      - --server.port
+      - "8501"
+      - --server.address
+      - 0.0.0.0
+    depends_on:
+      - model-server
+    environment:
+      - CONFIG_ENV=docker
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./:/app
+
+volumes:
+  mlruns:

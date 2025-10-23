@@ -4,6 +4,7 @@ from .deployment import (
     save_process_metadata,
     score_payload,
     start_mlflow_server,
+    stop_existing_process,
     update_mlflow_deployment,
     wait_for_healthcheck,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "run_tune",
     "save_process_metadata",
     "score_payload",
+    "stop_existing_process",
     "shutdown_ray",
     "start_mlflow_server",
     "start_run",
@@ -28,4 +30,3 @@ __all__ = [
     "upload_feedback",
     "wait_for_healthcheck",
 ]
-

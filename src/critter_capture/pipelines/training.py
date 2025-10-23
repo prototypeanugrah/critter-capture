@@ -17,6 +17,8 @@ import torch.nn as nn
 from mlflow import pytorch as mlflow_pytorch
 from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
 
+from ray.air import session
+
 from critter_capture.config import PipelineConfig
 from critter_capture.data import DatasetBundle, build_dataloaders, prepare_datasets
 from critter_capture.metrics.classification import ClassificationMetrics
@@ -146,7 +148,6 @@ class TrainingPipeline(PipelineBase):
         init_ray()
 
         def trainable(params: Dict[str, Any]) -> None:
-            from ray import air
 
             torch.set_float32_matmul_precision("medium")
 
@@ -167,7 +168,7 @@ class TrainingPipeline(PipelineBase):
             optimizer = _build_optimizer(model, local_cfg, params)
             scheduler = _build_scheduler(optimizer, local_cfg, params)
 
-            scaler = torch.cuda.amp.GradScaler(
+            scaler = torch.amp.GradScaler(
                 enabled=local_cfg.training.amp and device.type == "cuda"
             )
 
@@ -198,7 +199,7 @@ class TrainingPipeline(PipelineBase):
                 elif scheduler:
                     scheduler.step()
 
-                air.session.report(
+                session.report(
                     {
                         "val_macro_f1": val_metrics.macro_f1,
                         "val_macro_precision": val_metrics.macro_precision,

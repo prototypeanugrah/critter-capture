@@ -14,3 +14,10 @@ wheels/
 
 # Artifacts
 .zip
+*.log
+
+# Model artifacts
+outputs/
+mlruns/
+mlartifacts/
+data/raw/

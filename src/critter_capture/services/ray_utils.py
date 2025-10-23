@@ -61,14 +61,19 @@ def run_tune(
         else:
             raise ValueError(f"Unsupported search space definition for {key}: {definitions}")
 
+    tune_config_kwargs: Dict[str, Any] = {
+        "scheduler": scheduler,
+        "num_samples": num_samples,
+    }
+
+    scheduler_metric = getattr(scheduler, "metric", None)
+    scheduler_mode = getattr(scheduler, "mode", None)
+    if not scheduler_metric and not scheduler_mode:
+        tune_config_kwargs.update({"metric": "val_macro_f1", "mode": "max"})
+
     tuner = tune.Tuner(
         tune.with_resources(trainable, resources=resources_per_trial),
-        tune_config=tune.TuneConfig(
-            scheduler=scheduler,
-            metric="val_macro_f1",
-            mode="max",
-            num_samples=num_samples,
-        ),
+        tune_config=tune.TuneConfig(**tune_config_kwargs),
         param_space=parameter_space,
     )
 
@@ -77,4 +82,3 @@ def run_tune(
 
 
 __all__ = ["init_ray", "shutdown_ray", "build_scheduler", "run_tune"]
-

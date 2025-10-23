@@ -32,14 +32,14 @@ def shutdown_ray() -> None:
         LOGGER.info("Shut down Ray runtime.")
 
 
-def build_scheduler(max_epochs: int, grace_period: int) -> ASHAScheduler:
+def build_scheduler(max_epochs: int, grace_period: int, metric: str, mode: str) -> ASHAScheduler:
     return ASHAScheduler(
         max_t=max_epochs,
         grace_period=grace_period,
         reduction_factor=2,
         time_attr="training_iteration",
-        metric="val_macro_f1",
-        mode="max",
+        metric=metric,
+        mode=mode,
     )
 
 
@@ -49,6 +49,8 @@ def run_tune(
     num_samples: int,
     scheduler: ASHAScheduler,
     resources_per_trial: Dict[str, Any],
+    metric: str,
+    mode: str,
 ) -> tune.ResultGrid:
     """Execute a Ray Tune hyperparameter search."""
 
@@ -75,7 +77,7 @@ def run_tune(
     scheduler_metric = getattr(scheduler, "metric", None)
     scheduler_mode = getattr(scheduler, "mode", None)
     if not scheduler_metric and not scheduler_mode:
-        tune_config_kwargs.update({"metric": "val_macro_f1", "mode": "max"})
+        tune_config_kwargs.update({"metric": metric, "mode": mode})
 
     tuner = tune.Tuner(
         tune.with_resources(trainable, resources=resources_per_trial),

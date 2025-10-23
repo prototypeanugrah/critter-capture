@@ -156,6 +156,14 @@ class TuneConfig(BaseModel):
     num_samples: int = Field(10, ge=1)
     max_epochs: int = Field(15, ge=1)
     grace_period: int = Field(5, ge=1)
+    metric: str = Field(
+        "val_macro_f1",
+        description="Primary metric key reported to Ray Tune.",
+    )
+    mode: str = Field(
+        "max",
+        description="Optimization direction for the primary metric ('max' or 'min').",
+    )
     search_space: Dict[str, Any] = Field(
         default_factory=lambda: {
             "lr": {"loguniform": [1e-4, 1e-2]},
@@ -167,6 +175,13 @@ class TuneConfig(BaseModel):
     resources_per_trial: Dict[str, Any] = Field(
         default_factory=lambda: {"cpu": 2, "gpu": 0}
     )
+
+    @field_validator("mode")
+    def validate_mode(cls, value: str) -> str:
+        lowered = value.lower()
+        if lowered not in {"max", "min"}:
+            raise ValueError("tuning.mode must be either 'max' or 'min'.")
+        return lowered
 
 
 class EvaluationCriteria(BaseModel):

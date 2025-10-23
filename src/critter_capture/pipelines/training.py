@@ -217,17 +217,27 @@ class TrainingPipeline(PipelineBase):
                     if patience_counter >= patience:
                         break
 
-        scheduler = build_scheduler(cfg.tuning.max_epochs, cfg.tuning.grace_period)
+        metric_key = cfg.tuning.metric
+        metric_mode = cfg.tuning.mode
+
+        scheduler = build_scheduler(
+            cfg.tuning.max_epochs,
+            cfg.tuning.grace_period,
+            metric_key,
+            metric_mode,
+        )
         result_grid = run_tune(
             trainable=trainable,
             search_space=cfg.tuning.search_space,
             num_samples=cfg.tuning.num_samples,
             scheduler=scheduler,
             resources_per_trial=cfg.tuning.resources_per_trial,
+            metric=metric_key,
+            mode=metric_mode,
         )
         shutdown_ray()
 
-        best_result = result_grid.get_best_result(metric="val_macro_f1", mode="max")
+        best_result = result_grid.get_best_result(metric=metric_key, mode=metric_mode)
         LOGGER.info(
             "Best tuning result: f1=%.4f config=%s",
             best_result.metrics["val_macro_f1"],

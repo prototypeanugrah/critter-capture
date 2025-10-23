@@ -41,7 +41,7 @@ base:
     seed: 42
     device: cuda
   tuning:
-    enabled: true
+    enabled: false
     num_samples: 8
     max_epochs: 10
     grace_period: 3

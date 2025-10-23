@@ -71,9 +71,33 @@ class ObservationsDataset(TorchDataset):
         cache_path = self._cache_dir / f"{record.uuid}.jpg"
         if not cache_path.exists():
             self._download_image(record.image_url, cache_path)
-        with cache_path.open("rb") as handle:
-            image = Image.open(handle).convert("RGB")
-        return image
+
+        try:
+            # Open the image file directly instead of using a file handle
+            image = Image.open(cache_path).convert("RGB")
+            return image
+        except Exception as e:
+            LOGGER.warning(
+                "Failed to load image %s (UUID: %s): %s. Attempting to re-download...",
+                cache_path,
+                record.uuid,
+                str(e),
+            )
+            # Try to re-download the image in case it was corrupted
+            try:
+                self._download_image(record.image_url, cache_path)
+                image = Image.open(cache_path).convert("RGB")
+                return image
+            except Exception as e2:
+                LOGGER.error(
+                    "Failed to load image %s (UUID: %s) even after re-download: %s",
+                    cache_path,
+                    record.uuid,
+                    str(e2),
+                )
+                # Return a placeholder image to prevent the training from crashing
+                # This is a 1x1 white pixel image
+                return Image.new("RGB", (1, 1), color="white")
 
     @staticmethod
     def _download_image(url: str, destination: Path) -> None:

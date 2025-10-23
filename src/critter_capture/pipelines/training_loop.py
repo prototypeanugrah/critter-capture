@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import re
 from typing import Dict, Tuple
 
 import mlflow
@@ -13,7 +13,10 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
-from critter_capture.metrics.classification import ClassificationMetrics, compute_classification_metrics
+from critter_capture.metrics.classification import (
+    ClassificationMetrics,
+    compute_classification_metrics,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -42,7 +45,7 @@ def train_one_epoch(
         targets = batch["target"].to(device)
 
         optimizer.zero_grad()
-        with torch.cuda.amp.autocast(enabled=use_amp):
+        with torch.amp.autocast(device.type, enabled=use_amp):
             logits = model(inputs)
             loss = criterion(logits, targets)
 
@@ -105,10 +108,16 @@ def evaluate(
         label_names=dataloader.dataset.label_names,  # type: ignore[attr-defined]
     )
 
-    return avg_loss, metrics, {"y_true": y_true_arr, "y_scores": y_scores_arr, "y_pred": y_pred_arr}
+    return (
+        avg_loss,
+        metrics,
+        {"y_true": y_true_arr, "y_scores": y_scores_arr, "y_pred": y_pred_arr},
+    )
 
 
-def log_epoch_metrics(phase: str, loss: float, metrics: ClassificationMetrics, epoch: int) -> None:
+def log_epoch_metrics(
+    phase: str, loss: float, metrics: ClassificationMetrics, epoch: int
+) -> None:
     """Log metrics to MLflow."""
 
     mlflow.log_metric(f"{phase}_loss", loss, step=epoch)
@@ -117,7 +126,9 @@ def log_epoch_metrics(phase: str, loss: float, metrics: ClassificationMetrics, e
     mlflow.log_metric(f"{phase}_macro_recall", metrics.macro_recall, step=epoch)
     mlflow.log_metric(f"{phase}_macro_f1", metrics.macro_f1, step=epoch)
     for label_name, stats in metrics.per_class.items():
-        safe_label = label_name.replace(" ", "_").lower()
+        safe_label = re.sub(
+            r"[^0-9a-zA-Z_\-./:]+", "_", label_name.lower().replace(" ", "_")
+        )
         for stat_name, value in stats.items():
             mlflow.log_metric(f"{phase}_{safe_label}_{stat_name}", value, step=epoch)
 

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Dict, Sequence
 
 import numpy as np
-from sklearn.metrics import accuracy_score, f1_score, precision_recall_fscore_support
+from sklearn.metrics import accuracy_score, precision_recall_fscore_support
 
 
 @dataclass
@@ -34,7 +34,7 @@ def compute_classification_metrics(
             y_true,
             y_pred,
             labels=[idx],
-            average="binary",
+            average="macro",
             zero_division=0,
         )
         per_class[name] = {
@@ -53,4 +53,3 @@ def compute_classification_metrics(
 
 
 __all__ = ["ClassificationMetrics", "compute_classification_metrics"]
-

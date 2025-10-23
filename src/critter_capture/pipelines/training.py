@@ -19,8 +19,14 @@ from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
 
 from ray.air import session
 
+from critter_capture.baselines import run_resnet50_baseline
 from critter_capture.config import PipelineConfig
-from critter_capture.data import DatasetBundle, build_dataloaders, prepare_datasets
+from critter_capture.data import (
+    DatasetBundle,
+    build_dataloaders,
+    compute_class_weights,
+    prepare_datasets,
+)
 from critter_capture.metrics.classification import ClassificationMetrics
 from critter_capture.models import AnimalSpeciesCNN
 from critter_capture.pipelines.base import PipelineBase, PipelineContext
@@ -158,13 +164,14 @@ class TrainingPipeline(PipelineBase):
                 local_cfg.data, seed=local_cfg.training.seed
             )
             local_cfg.model.num_classes = len(trial_bundle.label_names)
+            class_weights = compute_class_weights(trial_bundle.train)
             dataloaders = build_dataloaders(
                 trial_bundle,
                 batch_size=int(params.get("batch_size", local_cfg.training.batch_size)),
                 num_workers=local_cfg.data.num_workers,
             )
             model = _build_model(local_cfg, params).to(device)
-            criterion = nn.CrossEntropyLoss()
+            criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
             optimizer = _build_optimizer(model, local_cfg, params)
             scheduler = _build_scheduler(optimizer, local_cfg, params)
 
@@ -254,12 +261,29 @@ class TrainingPipeline(PipelineBase):
         dataloaders = build_dataloaders(
             bundle, batch_size=batch_size, num_workers=cfg.data.num_workers
         )
+        class_weights = compute_class_weights(bundle.train)
 
         device = resolve_device(cfg.training.device)
+        class_weights_device = class_weights.to(device)
+        baseline_lr = float(hyperparams.get("lr", cfg.training.optimizer.lr))
+        baseline_weight_decay = float(
+            hyperparams.get("weight_decay", cfg.training.optimizer.weight_decay)
+        )
+        baseline_result = run_resnet50_baseline(
+            dataloaders=dataloaders,
+            device=device,
+            num_classes=len(bundle.label_names),
+            epochs=min(cfg.training.epochs, 5),
+            lr=baseline_lr,
+            weight_decay=baseline_weight_decay,
+            output_dir=Path("outputs/baseline"),
+            class_weights=class_weights,
+        )
+
         model = _build_model(cfg, hyperparams).to(device)
         optimizer = _build_optimizer(model, cfg, hyperparams)
         scheduler = _build_scheduler(optimizer, cfg, hyperparams)
-        criterion = nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss(weight=class_weights_device)
         scaler = torch.amp.GradScaler(
             enabled=cfg.training.amp and device.type == "cuda"
         )
@@ -282,6 +306,61 @@ class TrainingPipeline(PipelineBase):
                 }
             )
             log_config(json.loads(cfg.json()))
+            mlflow.log_params(
+                {
+                    "baseline_epochs": baseline_result.epochs,
+                    "baseline_best_epoch": baseline_result.best_epoch,
+                    "baseline_lr": baseline_lr,
+                    "baseline_weight_decay": baseline_weight_decay,
+                    "baseline_batch_size": batch_size,
+                }
+            )
+            mlflow.log_metric("baseline_val_loss", baseline_result.val_loss)
+            mlflow.log_metric(
+                "baseline_val_accuracy", baseline_result.val_metrics.accuracy
+            )
+            mlflow.log_metric(
+                "baseline_val_macro_precision",
+                baseline_result.val_metrics.macro_precision,
+            )
+            mlflow.log_metric(
+                "baseline_val_macro_recall",
+                baseline_result.val_metrics.macro_recall,
+            )
+            mlflow.log_metric(
+                "baseline_val_macro_f1",
+                baseline_result.val_metrics.macro_f1,
+            )
+            mlflow.log_metric("baseline_test_loss", baseline_result.test_loss)
+            mlflow.log_metric(
+                "baseline_test_accuracy", baseline_result.test_metrics.accuracy
+            )
+            mlflow.log_metric(
+                "baseline_test_macro_precision",
+                baseline_result.test_metrics.macro_precision,
+            )
+            mlflow.log_metric(
+                "baseline_test_macro_recall",
+                baseline_result.test_metrics.macro_recall,
+            )
+            mlflow.log_metric(
+                "baseline_test_macro_f1",
+                baseline_result.test_metrics.macro_f1,
+            )
+            mlflow.log_artifact(
+                str(baseline_result.model_path), artifact_path="baseline"
+            )
+            mlflow.log_artifact(
+                str(baseline_result.metadata_path), artifact_path="baseline"
+            )
+            mlflow.log_artifacts(
+                str(baseline_result.predictions_dir),
+                artifact_path="baseline/predictions",
+            )
+            mlflow.log_dict(
+                {"class_weights": class_weights.tolist()},
+                "baseline/class_weights.json",
+            )
 
             best_val_f1 = float("-inf")
             patience_counter = 0
@@ -361,6 +440,18 @@ class TrainingPipeline(PipelineBase):
                 "validation_metrics": asdict(val_metrics),
                 "test_metrics": asdict(test_metrics),
                 "best_params": hyperparams,
+                "class_weights": class_weights.tolist(),
+                "baseline": {
+                    "val_loss": baseline_result.val_loss,
+                    "test_loss": baseline_result.test_loss,
+                    "val_metrics": asdict(baseline_result.val_metrics),
+                    "test_metrics": asdict(baseline_result.test_metrics),
+                    "best_epoch": baseline_result.best_epoch,
+                    "epochs": baseline_result.epochs,
+                    "lr": baseline_lr,
+                    "weight_decay": baseline_weight_decay,
+                    "class_weights": class_weights.tolist(),
+                },
             }
             Path("outputs/predictions").mkdir(parents=True, exist_ok=True)
             np.save("outputs/predictions/val_y_true.npy", val_outputs["y_true"])

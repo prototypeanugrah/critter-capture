@@ -238,6 +238,19 @@ def prepare_datasets(cfg: DataConfig, seed: int) -> DatasetBundle:
     )
 
 
+def compute_class_weights(dataset: ObservationsDataset) -> torch.Tensor:
+    """Compute inverse-frequency class weights for imbalanced classification."""
+
+    counts = torch.zeros(dataset._num_classes, dtype=torch.float32)
+    for record in dataset._records:
+        counts[record.label_index] += 1.0
+
+    counts = torch.clamp(counts, min=1.0)
+    weights = counts.sum() / (counts * counts.numel())
+    weights = weights / weights.mean()
+    return weights
+
+
 def build_dataloaders(
     bundle: DatasetBundle,
     batch_size: int,
@@ -273,5 +286,6 @@ __all__ = [
     "ObservationsDataset",
     "DatasetBundle",
     "prepare_datasets",
+    "compute_class_weights",
     "build_dataloaders",
 ]

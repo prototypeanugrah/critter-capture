@@ -16,15 +16,17 @@ import torch
 import torch.nn as nn
 from mlflow import pytorch as mlflow_pytorch
 from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
-from torch.utils.data import DataLoader
-from tqdm.auto import tqdm
 
 from critter_capture.config import PipelineConfig
 from critter_capture.data import DatasetBundle, build_dataloaders, prepare_datasets
 from critter_capture.metrics.classification import ClassificationMetrics
 from critter_capture.models import AnimalSpeciesCNN
 from critter_capture.pipelines.base import PipelineBase, PipelineContext
-from critter_capture.pipelines.training_loop import evaluate, log_epoch_metrics, train_one_epoch
+from critter_capture.pipelines.training_loop import (
+    evaluate,
+    log_epoch_metrics,
+    train_one_epoch,
+)
 from critter_capture.services import (
     build_scheduler,
     configure_mlflow,
@@ -67,15 +69,21 @@ def _build_model(config: PipelineConfig, overrides: Dict[str, Any]) -> AnimalSpe
     return model
 
 
-def _build_optimizer(model: nn.Module, config: PipelineConfig, overrides: Dict[str, Any]) -> torch.optim.Optimizer:
+def _build_optimizer(
+    model: nn.Module, config: PipelineConfig, overrides: Dict[str, Any]
+) -> torch.optim.Optimizer:
     opt_cfg = config.training.optimizer
     lr = overrides.get("lr", opt_cfg.lr)
     weight_decay = overrides.get("weight_decay", opt_cfg.weight_decay)
 
     if opt_cfg.name.lower() == "adamw":
-        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=lr, weight_decay=weight_decay
+        )
     elif opt_cfg.name.lower() == "adam":
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=lr, weight_decay=weight_decay
+        )
     else:
         raise ValueError(f"Unsupported optimizer: {opt_cfg.name}")
 
@@ -91,7 +99,9 @@ def _build_scheduler(
     name = sched_cfg.name.lower() if sched_cfg.name else None
 
     if name == "cosine":
-        return CosineAnnealingLR(optimizer, T_max=sched_cfg.t_max, eta_min=sched_cfg.min_lr)
+        return CosineAnnealingLR(
+            optimizer, T_max=sched_cfg.t_max, eta_min=sched_cfg.min_lr
+        )
     if name == "plateau":
         return ReduceLROnPlateau(optimizer, mode="max", patience=3, factor=0.5)
     return None
@@ -100,14 +110,21 @@ def _build_scheduler(
 class TrainingPipeline(PipelineBase):
     """Run model training with optional hyperparameter tuning."""
 
-    def __init__(self, context: PipelineContext, config_path: Path, environment: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        context: PipelineContext,
+        config_path: Path,
+        environment: Optional[str] = None,
+    ) -> None:
         super().__init__(context)
         self._config_path = config_path
         self._environment = environment
 
     def run(self) -> TrainingResult:
         cfg = self.context.config
-        configure_mlflow(cfg.storage.mlflow_tracking_uri, cfg.storage.mlflow_registry_uri)
+        configure_mlflow(
+            cfg.storage.mlflow_tracking_uri, cfg.storage.mlflow_registry_uri
+        )
 
         bundle = prepare_datasets(cfg.data, seed=cfg.training.seed)
         cfg.model.num_classes = len(bundle.label_names)
@@ -136,7 +153,9 @@ class TrainingPipeline(PipelineBase):
             local_cfg = self.context.config
             device = resolve_device(local_cfg.training.device)
 
-            trial_bundle = prepare_datasets(local_cfg.data, seed=local_cfg.training.seed)
+            trial_bundle = prepare_datasets(
+                local_cfg.data, seed=local_cfg.training.seed
+            )
             local_cfg.model.num_classes = len(trial_bundle.label_names)
             dataloaders = build_dataloaders(
                 trial_bundle,
@@ -148,7 +167,9 @@ class TrainingPipeline(PipelineBase):
             optimizer = _build_optimizer(model, local_cfg, params)
             scheduler = _build_scheduler(optimizer, local_cfg, params)
 
-            scaler = torch.cuda.amp.GradScaler(enabled=local_cfg.training.amp and device.type == "cuda")
+            scaler = torch.cuda.amp.GradScaler(
+                enabled=local_cfg.training.amp and device.type == "cuda"
+            )
 
             max_epochs = self.context.config.tuning.max_epochs
             best_macro_f1 = 0.0
@@ -206,21 +227,31 @@ class TrainingPipeline(PipelineBase):
         shutdown_ray()
 
         best_result = result_grid.get_best_result(metric="val_macro_f1", mode="max")
-        LOGGER.info("Best tuning result: f1=%.4f config=%s", best_result.metrics["val_macro_f1"], best_result.config)
+        LOGGER.info(
+            "Best tuning result: f1=%.4f config=%s",
+            best_result.metrics["val_macro_f1"],
+            best_result.config,
+        )
         return dict(best_result.config)
 
-    def _train_final(self, bundle: DatasetBundle, hyperparams: Dict[str, Any]) -> TrainingResult:
+    def _train_final(
+        self, bundle: DatasetBundle, hyperparams: Dict[str, Any]
+    ) -> TrainingResult:
         cfg = self.context.config
         batch_size = int(hyperparams.get("batch_size", cfg.training.batch_size))
 
-        dataloaders = build_dataloaders(bundle, batch_size=batch_size, num_workers=cfg.data.num_workers)
+        dataloaders = build_dataloaders(
+            bundle, batch_size=batch_size, num_workers=cfg.data.num_workers
+        )
 
         device = resolve_device(cfg.training.device)
         model = _build_model(cfg, hyperparams).to(device)
         optimizer = _build_optimizer(model, cfg, hyperparams)
         scheduler = _build_scheduler(optimizer, cfg, hyperparams)
         criterion = nn.CrossEntropyLoss()
-        scaler = torch.cuda.amp.GradScaler(enabled=cfg.training.amp and device.type == "cuda")
+        scaler = torch.amp.GradScaler(
+            enabled=cfg.training.amp and device.type == "cuda"
+        )
 
         experiment_name = "animal_species_multiclass"
         tags = {"pipeline": "training", "environment": cfg.environment}
@@ -234,7 +265,9 @@ class TrainingPipeline(PipelineBase):
                     "batch_size": batch_size,
                     "dropout": hyperparams.get("dropout", cfg.model.dropout),
                     "lr": hyperparams.get("lr", cfg.training.optimizer.lr),
-                    "weight_decay": hyperparams.get("weight_decay", cfg.training.optimizer.weight_decay),
+                    "weight_decay": hyperparams.get(
+                        "weight_decay", cfg.training.optimizer.weight_decay
+                    ),
                 }
             )
             log_config(json.loads(cfg.json()))
@@ -303,7 +336,9 @@ class TrainingPipeline(PipelineBase):
             mlflow.log_metric("final_val_macro_recall", val_metrics.macro_recall)
             mlflow.log_metric("final_val_macro_f1", val_metrics.macro_f1)
             mlflow.log_metric("final_test_accuracy", test_metrics.accuracy)
-            mlflow.log_metric("final_test_macro_precision", test_metrics.macro_precision)
+            mlflow.log_metric(
+                "final_test_macro_precision", test_metrics.macro_precision
+            )
             mlflow.log_metric("final_test_macro_recall", test_metrics.macro_recall)
             mlflow.log_metric("final_test_macro_f1", test_metrics.macro_f1)
             mlflow.log_artifact("outputs/best_model.pt", artifact_path="model")
@@ -345,11 +380,15 @@ class TrainingPipeline(PipelineBase):
         return result
 
 
-def run_training_pipeline(config_path: Path, environment: Optional[str] = None) -> TrainingResult:
+def run_training_pipeline(
+    config_path: Path, environment: Optional[str] = None
+) -> TrainingResult:
     from critter_capture.pipelines.base import build_context
 
     context = build_context(config_path, environment)
-    pipeline = TrainingPipeline(context=context, config_path=config_path, environment=environment)
+    pipeline = TrainingPipeline(
+        context=context, config_path=config_path, environment=environment
+    )
     return pipeline.run()
 
 

@@ -30,7 +30,7 @@ def train_one_epoch(
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
-    scaler: torch.cuda.amp.GradScaler | None = None,
+    scaler: torch.amp.GradScaler | None = None,
     clip_norm: float | None = None,
 ) -> float:
     """Train the model for a single epoch and return the average loss."""

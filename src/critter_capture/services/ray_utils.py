@@ -8,7 +8,7 @@ import logging
 from typing import Any, Callable, Dict
 
 import ray
-from ray import air, tune
+from ray import tune
 from ray.tune.schedulers import ASHAScheduler
 
 LOGGER = logging.getLogger(__name__)
@@ -18,7 +18,11 @@ def init_ray(ignore_reinit_error: bool = True) -> None:
     if ray.is_initialized():
         LOGGER.debug("Ray is already initialized.")
         return
-    ray.init(ignore_reinit_error=ignore_reinit_error, include_dashboard=False, log_to_driver=False)
+    ray.init(
+        ignore_reinit_error=ignore_reinit_error,
+        include_dashboard=False,
+        log_to_driver=False,
+    )
     LOGGER.info("Initialized Ray runtime.")
 
 
@@ -59,7 +63,9 @@ def run_tune(
         elif "choice" in definitions:
             parameter_space[key] = tune.choice(definitions["choice"])
         else:
-            raise ValueError(f"Unsupported search space definition for {key}: {definitions}")
+            raise ValueError(
+                f"Unsupported search space definition for {key}: {definitions}"
+            )
 
     tune_config_kwargs: Dict[str, Any] = {
         "scheduler": scheduler,

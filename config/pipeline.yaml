@@ -1,7 +1,7 @@
 base:
   environment: local
   data:
-    csv_path: data/sample_data.csv
+    csv_path: ../data/sample_data.csv
     uuid_column: uuid
     image_url_column: image_url
     label_column: taxon_id
@@ -13,7 +13,7 @@ base:
     normalize_mean: [0.485, 0.456, 0.406]
     normalize_std: [0.229, 0.224, 0.225]
     augmentations: true
-    image_cache_dir: data/raw/images
+    image_cache_dir: ../data/raw/images
     sample_limit: null
   model:
     num_classes: null
@@ -78,7 +78,7 @@ base:
     tolerance_recall_delta: 0.05
   logging:
     level: INFO
-    log_dir: logs
+    log_dir: ../logs
     log_file: pipeline.log
   storage:
     mlflow_tracking_uri: http://127.0.0.1:5000

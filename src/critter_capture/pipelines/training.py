@@ -442,7 +442,7 @@ class TrainingPipeline(PipelineBase):
                 criterion=criterion,
                 device=device,
             )
-            test_loss, test_metrics, test_outputs = evaluate(
+            _, test_metrics, test_outputs = evaluate(
                 model=model,
                 dataloader=dataloaders["test"],
                 criterion=criterion,

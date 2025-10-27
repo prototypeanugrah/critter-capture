@@ -28,8 +28,8 @@ dependencies = [
     "pyyaml-env-tag>=0.1",
     "python-dotenv>=1.0.0",
     "orjson>=3.9.0",
-    "nvitop",
     "pytest>=8.4.2",
+    "nvitop>=1.5.3",
 ]
 
 

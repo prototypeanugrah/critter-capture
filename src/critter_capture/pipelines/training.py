@@ -15,9 +15,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 from mlflow import pytorch as mlflow_pytorch
-from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
-
 from ray.air import session
+from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
 
 from critter_capture.baselines import run_resnet50_baseline
 from critter_capture.config import PipelineConfig
@@ -154,7 +153,6 @@ class TrainingPipeline(PipelineBase):
         init_ray()
 
         def trainable(params: Dict[str, Any]) -> None:
-
             torch.set_float32_matmul_precision("medium")
 
             local_cfg = self.context.config
@@ -273,7 +271,7 @@ class TrainingPipeline(PipelineBase):
             dataloaders=dataloaders,
             device=device,
             num_classes=len(bundle.label_names),
-            epochs=min(cfg.training.epochs, 5),
+            epochs=min(cfg.training.epochs, 10),
             lr=baseline_lr,
             weight_decay=baseline_weight_decay,
             output_dir=Path("outputs/baseline"),

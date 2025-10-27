@@ -62,14 +62,19 @@ def run_resnet50_baseline(
     epochs: int = 3,
     lr: float = 1e-3,
     weight_decay: float = 0.0,
-    momentum: float | None = None,
     output_dir: Path | None = None,
     class_weights: torch.Tensor | None = None,
 ) -> ResNet50BaselineResult:
     """Fine-tune the classifier head of a pretrained ResNet-50 and evaluate it."""
 
-    if "train" not in dataloaders or "validation" not in dataloaders or "test" not in dataloaders:
-        raise ValueError("Expected dataloaders dict with 'train', 'validation', and 'test' keys.")
+    if (
+        "train" not in dataloaders
+        or "validation" not in dataloaders
+        or "test" not in dataloaders
+    ):
+        raise ValueError(
+            "Expected dataloaders dict with 'train', 'validation', and 'test' keys."
+        )
 
     train_loader = dataloaders["train"]
     val_loader = dataloaders["validation"]
@@ -85,14 +90,9 @@ def run_resnet50_baseline(
     weight_tensor = class_weights.to(device) if class_weights is not None else None
     criterion = nn.CrossEntropyLoss(weight=weight_tensor)
 
-    if momentum is not None:
-        optimizer = torch.optim.SGD(
-            model.fc.parameters(), lr=lr, momentum=momentum, weight_decay=weight_decay
-        )
-    else:
-        optimizer = torch.optim.Adam(
-            model.fc.parameters(), lr=lr, weight_decay=weight_decay
-        )
+    optimizer = torch.optim.AdamW(
+        model.fc.parameters(), lr=lr, weight_decay=weight_decay
+    )
 
     best_val_f1 = float("-inf")
     best_epoch = -1
@@ -144,8 +144,7 @@ def run_resnet50_baseline(
             best_val_f1 = val_metrics.macro_f1
             best_epoch = epoch
             best_state = {
-                key: value.detach().cpu()
-                for key, value in model.state_dict().items()
+                key: value.detach().cpu() for key, value in model.state_dict().items()
             }
             best_val = (val_loss, val_metrics, val_outputs)
 

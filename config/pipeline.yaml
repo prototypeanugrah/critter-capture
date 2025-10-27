@@ -4,6 +4,7 @@ base:
     csv_path: ../data/sample_data.csv
     uuid_column: uuid
     image_url_column: image_url
+    image_url_fallback_column: url
     label_column: taxon_id
     label_names_column: common_name
     validation_size: 0.15

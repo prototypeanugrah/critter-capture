@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Sequence
@@ -13,6 +15,8 @@ import numpy as np
 import pandas as pd
 import requests
 import torch
+from functools import lru_cache
+from requests import RequestException
 from PIL import Image
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset as TorchDataset
@@ -23,6 +27,8 @@ from critter_capture.data.transforms import build_transforms
 from critter_capture.utils import ensure_dir
 
 LOGGER = logging.getLogger(__name__)
+_INAT_OBSERVATION_PATTERN = re.compile(r"/observations/(\\d+)")
+_INAT_API_TEMPLATE = "https://api.inaturalist.org/v1/observations/{obs_id}"
 
 
 @dataclass
@@ -34,6 +40,9 @@ class ObservationRecord:
 
 class ObservationsDataset(TorchDataset):
     """PyTorch dataset for observations backed by cached image files."""
+
+    _MAX_DOWNLOAD_RETRIES = 3
+    _RETRY_BACKOFF_SECONDS = 2.0
 
     def __init__(
         self,
@@ -70,7 +79,8 @@ class ObservationsDataset(TorchDataset):
     def _load_image(self, record: ObservationRecord) -> Image.Image:
         cache_path = self._cache_dir / f"{record.uuid}.jpg"
         if not cache_path.exists():
-            self._download_image(record.image_url, cache_path)
+            if not self._download_with_retries(record.image_url, cache_path, record.uuid):
+                return self._placeholder_image(cache_path)
 
         try:
             # Open the image file directly instead of using a file handle
@@ -84,35 +94,149 @@ class ObservationsDataset(TorchDataset):
                 str(e),
             )
             # Try to re-download the image in case it was corrupted
+            cache_path.unlink(missing_ok=True)
+            if self._download_with_retries(record.image_url, cache_path, record.uuid):
+                try:
+                    image = Image.open(cache_path).convert("RGB")
+                    return image
+                except Exception as e2:
+                    LOGGER.error(
+                        "Failed to load image %s (UUID: %s) even after re-download: %s",
+                        cache_path,
+                        record.uuid,
+                        str(e2),
+                    )
+            return self._placeholder_image(cache_path)
+
+    def _download_with_retries(self, url: str, destination: Path, uuid: str) -> bool:
+        for attempt in range(1, self._MAX_DOWNLOAD_RETRIES + 1):
             try:
-                self._download_image(record.image_url, cache_path)
-                image = Image.open(cache_path).convert("RGB")
-                return image
-            except Exception as e2:
-                LOGGER.error(
-                    "Failed to load image %s (UUID: %s) even after re-download: %s",
-                    cache_path,
-                    record.uuid,
-                    str(e2),
+                self._download_image(url, destination)
+                return True
+            except RequestException as exc:
+                LOGGER.warning(
+                    "HTTP error downloading image for UUID %s (attempt %d/%d): %s",
+                    uuid,
+                    attempt,
+                    self._MAX_DOWNLOAD_RETRIES,
+                    exc,
                 )
-                # Return a placeholder image to prevent the training from crashing
-                # This is a 1x1 white pixel image
-                return Image.new("RGB", (1, 1), color="white")
+                destination.unlink(missing_ok=True)
+            except Exception as exc:  # pragma: no cover - defensive
+                LOGGER.warning(
+                    "Unexpected error downloading image for UUID %s (attempt %d/%d): %s",
+                    uuid,
+                    attempt,
+                    self._MAX_DOWNLOAD_RETRIES,
+                    exc,
+                )
+                destination.unlink(missing_ok=True)
+
+            if attempt < self._MAX_DOWNLOAD_RETRIES:
+                time.sleep(self._RETRY_BACKOFF_SECONDS * attempt)
+
+        LOGGER.error(
+            "Giving up on downloading image for UUID %s from %s after %d attempts.",
+            uuid,
+            url,
+            self._MAX_DOWNLOAD_RETRIES,
+        )
+        return False
 
     @staticmethod
     def _download_image(url: str, destination: Path) -> None:
         ensure_dir(destination.parent)
         parsed = urlparse(url)
         if parsed.scheme in {"http", "https"}:
+            resolved_url = _maybe_resolve_inat_photo_url(parsed)
+            if resolved_url:
+                url = resolved_url
+                parsed = urlparse(url)
             LOGGER.debug("Downloading image from %s", url)
             response = requests.get(url, timeout=30)
             response.raise_for_status()
+            content_type = response.headers.get("Content-Type", "")
+            if "image" not in content_type.lower():
+                raise RequestException(
+                    f"Unexpected content type '{content_type}' while downloading {url}"
+                )
             destination.write_bytes(response.content)
         else:
             source = Path(url)
             if not source.exists():  # pragma: no cover - defensive
                 raise FileNotFoundError(f"Image source not found for {url}")
             shutil.copy(source, destination)
+
+    @staticmethod
+    def _placeholder_image(destination: Path) -> Image.Image:
+        placeholder = Image.new("RGB", (1, 1), color="white")
+        try:
+            placeholder.save(destination, format="JPEG")
+        except Exception:  # pragma: no cover - best effort
+            pass
+        return placeholder
+
+
+def _extract_image_url(row: pd.Series, cfg: DataConfig) -> str | None:
+    def _clean(value) -> str | None:
+        if value is None or pd.isna(value):
+            return None
+        text = str(value).strip()
+        if not text or text.lower() == "nan":
+            return None
+        return text
+
+    primary = _clean(row.get(cfg.image_url_column))
+    if primary:
+        return primary
+
+    fallback_col = getattr(cfg, "image_url_fallback_column", None)
+    if fallback_col:
+        fallback = _clean(row.get(fallback_col))
+        if fallback:
+            return fallback
+
+    return None
+
+
+def _maybe_resolve_inat_photo_url(parsed_url) -> str | None:
+    if "inaturalist.org" not in parsed_url.netloc:
+        return None
+
+    match = _INAT_OBSERVATION_PATTERN.search(parsed_url.path)
+    if not match:
+        return None
+
+    obs_id = match.group(1)
+    return _resolve_inat_photo_url(obs_id)
+
+
+@lru_cache(maxsize=8192)
+def _resolve_inat_photo_url(obs_id: str) -> str | None:
+    api_url = _INAT_API_TEMPLATE.format(obs_id=obs_id)
+    response = requests.get(api_url, timeout=30)
+    response.raise_for_status()
+    payload = response.json()
+    results = payload.get("results") or []
+    if not results:
+        return None
+
+    photos = results[0].get("photos") or []
+    if not photos:
+        return None
+
+    preferred_keys = (
+        "original_url",
+        "large_url",
+        "medium_url",
+        "url",
+        "small_url",
+    )
+    for key in preferred_keys:
+        candidate = photos[0].get(key)
+        if candidate:
+            return candidate.replace("square", "large")
+    return None
 
 
 @dataclass
@@ -134,11 +258,18 @@ def _load_records(
         cfg.label_column,
         cfg.label_names_column,
     }
+    if cfg.image_url_fallback_column:
+        required_columns.add(cfg.image_url_fallback_column)
     missing = required_columns - set(df.columns)
     if missing:
         raise ValueError(f"Missing required columns in CSV: {missing}")
 
-    df = df.dropna(subset=list(required_columns))
+    essential_columns = {
+        cfg.uuid_column,
+        cfg.label_column,
+        cfg.label_names_column,
+    }
+    df = df.dropna(subset=list(essential_columns))
 
     if cfg.sample_limit:
         df = df.head(cfg.sample_limit)
@@ -158,7 +289,10 @@ def _load_records(
     grouped = df.groupby(cfg.uuid_column, sort=False)
     records: List[ObservationRecord] = []
     for uuid, group in grouped:
-        image_url = str(group.iloc[0][cfg.image_url_column])
+        image_url = _extract_image_url(group.iloc[0], cfg)
+        if not image_url:
+            LOGGER.warning("Skipping observation %s due to missing image URL.", uuid)
+            continue
         label_ids_unique = sorted(
             {int(label) for label in group[cfg.label_column].tolist()}
         )

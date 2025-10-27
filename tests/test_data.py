@@ -67,3 +67,43 @@ def test_prepare_datasets_and_dataloaders(tmp_path) -> None:
     assert batch["image"].shape[1:] == (3, 64, 64)
     assert batch["target"].shape == (2,)
     assert batch["target"].dtype == torch.long
+
+
+def test_prepare_datasets_uses_fallback_column(tmp_path) -> None:
+    img = _make_image(42)
+    image_path = tmp_path / "img_fallback.jpg"
+    img.save(image_path)
+
+    rows = [
+        {
+            "uuid": f"fallback_{i}",
+            "image_url": np.nan,
+            "url": str(image_path),
+            "taxon_id": 123,
+            "common_name": "Fallback Label",
+        }
+        for i in range(5)
+    ]
+    df = pd.DataFrame(rows)
+    csv_path = tmp_path / "observations_fallback.csv"
+    df.to_csv(csv_path, index=False)
+
+    cfg = DataConfig(
+        csv_path=csv_path,
+        uuid_column="uuid",
+        image_url_column="image_url",
+        image_url_fallback_column="url",
+        label_column="taxon_id",
+        label_names_column="common_name",
+        validation_size=0.2,
+        test_size=0.2,
+        num_workers=0,
+        image_size=64,
+        augmentations=False,
+        image_cache_dir=tmp_path / "cache_fallback",
+    )
+
+    bundle = prepare_datasets(cfg, seed=7)
+    total = len(bundle.train) + len(bundle.validation) + len(bundle.test)
+    assert total == len(rows)
+    assert any(dataset._records for dataset in (bundle.train, bundle.validation, bundle.test))

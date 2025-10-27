@@ -28,6 +28,10 @@ class DataConfig(BaseModel):
     image_url_column: str = Field(
         "image_url", description="Column containing image URLs."
     )
+    image_url_fallback_column: Optional[str] = Field(
+        None,
+        description="Optional fallback column to use when the primary image URL is missing.",
+    )
     label_column: str = Field(
         "taxon_id", description="Column containing numeric label identifiers."
     )

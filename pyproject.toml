@@ -3,7 +3,7 @@ name = "critter-capture"
 version = "0.1.0"
 description = "Animal species classification pipeline"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = "==3.12.11"
 dependencies = [
     "ipykernel>=6.29.0",
     "matplotlib>=3.7.1",
@@ -29,6 +29,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "orjson>=3.9.0",
     "nvitop",
+    "pytest>=8.4.2",
 ]
 
 

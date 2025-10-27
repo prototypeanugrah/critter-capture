@@ -122,15 +122,27 @@ def log_epoch_metrics(
 
     mlflow.log_metric(f"{phase}_loss", loss, step=epoch)
     mlflow.log_metric(f"{phase}_accuracy", metrics.accuracy, step=epoch)
-    mlflow.log_metric(f"{phase}_macro_precision", metrics.macro_precision, step=epoch)
-    mlflow.log_metric(f"{phase}_macro_recall", metrics.macro_recall, step=epoch)
+    mlflow.log_metric(
+        f"{phase}_macro_precision",
+        metrics.macro_precision,
+        step=epoch,
+    )
+    mlflow.log_metric(
+        f"{phase}_macro_recall",
+        metrics.macro_recall,
+        step=epoch,
+    )
     mlflow.log_metric(f"{phase}_macro_f1", metrics.macro_f1, step=epoch)
     for label_name, stats in metrics.per_class.items():
         safe_label = re.sub(
             r"[^0-9a-zA-Z_\-./:]+", "_", label_name.lower().replace(" ", "_")
         )
         for stat_name, value in stats.items():
-            mlflow.log_metric(f"{phase}_{safe_label}_{stat_name}", value, step=epoch)
+            mlflow.log_metric(
+                f"{phase}_{safe_label}_{stat_name}",
+                value,
+                step=epoch,
+            )
 
 
 __all__ = ["evaluate", "log_epoch_metrics", "train_one_epoch"]

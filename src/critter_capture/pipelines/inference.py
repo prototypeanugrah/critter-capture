@@ -5,7 +5,6 @@ Inference pipeline that exercises the deployed model endpoint.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -15,10 +14,13 @@ import mlflow
 import numpy as np
 import torch
 from mlflow.tracking import MlflowClient
+from torch.utils.data import DataLoader
 
-from critter_capture.config import PipelineConfig
-from critter_capture.data import DatasetBundle, build_dataloaders, prepare_datasets
-from critter_capture.metrics.classification import ClassificationMetrics, compute_classification_metrics
+from critter_capture.data import build_dataloaders, prepare_datasets
+from critter_capture.metrics.classification import (
+    ClassificationMetrics,
+    compute_classification_metrics,
+)
 from critter_capture.pipelines.base import PipelineBase, PipelineContext
 from critter_capture.services import configure_mlflow
 
@@ -36,17 +38,26 @@ class InferenceResult:
 class InferencePipeline(PipelineBase):
     """Pipeline to validate inference against the deployment endpoint."""
 
-    def __init__(self, context: PipelineContext, config_path: Path, environment: Optional[str]) -> None:
+    def __init__(
+        self,
+        context: PipelineContext,
+        config_path: Path,
+        environment: Optional[str],
+    ) -> None:
         super().__init__(context)
         self._config_path = config_path
         self._environment = environment
 
     def run(self) -> InferenceResult:
         cfg = self.context.config
-        configure_mlflow(cfg.storage.mlflow_tracking_uri, cfg.storage.mlflow_registry_uri)
+        configure_mlflow(
+            cfg.storage.mlflow_tracking_uri, cfg.storage.mlflow_registry_uri
+        )
 
         bundle = prepare_datasets(cfg.data, seed=cfg.training.seed)
-        if cfg.model.num_classes is None or cfg.model.num_classes != len(bundle.label_names):
+        if cfg.model.num_classes is None or cfg.model.num_classes != len(
+            bundle.label_names
+        ):
             cfg.model.num_classes = len(bundle.label_names)
         dataloaders = build_dataloaders(
             bundle,
@@ -68,7 +79,10 @@ class InferencePipeline(PipelineBase):
 
         experiment_name = "animal_species_multiclass"
         mlflow.set_experiment(experiment_name)
-        run = mlflow.start_run(run_name="inference", tags={"pipeline": "inference", "environment": cfg.environment})
+        run = mlflow.start_run(
+            run_name="inference",
+            tags={"pipeline": "inference", "environment": cfg.environment},
+        )
         with run:
             mlflow.log_metric("inference_accuracy", metrics.accuracy)
             mlflow.log_metric("inference_macro_precision", metrics.macro_precision)
@@ -80,7 +94,13 @@ class InferencePipeline(PipelineBase):
             outputs_dir = Path("outputs/inference")
             outputs_dir.mkdir(parents=True, exist_ok=True)
             preds_path = outputs_dir / "predictions.npz"
-            np.savez_compressed(preds_path, y_true=y_true, y_scores=y_scores, y_pred=y_pred, latencies=predictions["latencies"])
+            np.savez_compressed(
+                preds_path,
+                y_true=y_true,
+                y_scores=y_scores,
+                y_pred=y_pred,
+                latencies=predictions["latencies"],
+            )
             mlflow.log_artifact(str(preds_path), artifact_path="predictions")
 
             client = MlflowClient()
@@ -93,9 +113,14 @@ class InferencePipeline(PipelineBase):
             run_id=run.info.run_id,
         )
 
-    async def _run_inference(self, dataloader, url: str) -> Dict[str, np.ndarray]:
-        import httpx
+    async def _run_inference(
+        self,
+        dataloader: DataLoader,
+        url: str,
+    ) -> Dict[str, np.ndarray]:
         import time
+
+        import httpx
 
         latencies: List[float] = []
         outputs: List[np.ndarray] = []
@@ -130,11 +155,15 @@ class InferencePipeline(PipelineBase):
         }
 
 
-def run_inference_pipeline(config_path: Path, environment: Optional[str] = None) -> InferenceResult:
+def run_inference_pipeline(
+    config_path: Path, environment: Optional[str] = None
+) -> InferenceResult:
     from critter_capture.pipelines.base import build_context
 
     context = build_context(config_path, environment)
-    pipeline = InferencePipeline(context=context, config_path=config_path, environment=environment)
+    pipeline = InferencePipeline(
+        context=context, config_path=config_path, environment=environment
+    )
     return pipeline.run()
 
 

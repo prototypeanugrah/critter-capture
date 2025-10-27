@@ -47,7 +47,10 @@ class DeploymentPipeline(PipelineBase):
     """Extends the training pipeline with deployment orchestration."""
 
     def __init__(
-        self, context: PipelineContext, config_path: Path, environment: Optional[str]
+        self,
+        context: PipelineContext,
+        config_path: Path,
+        environment: Optional[str],
     ) -> None:
         super().__init__(context)
         self._config_path = config_path
@@ -160,7 +163,11 @@ class DeploymentPipeline(PipelineBase):
         )
 
         deployment_stage = "Production"
-        update_model_stage(cfg.deployment.mlflow_model_name, version, deployment_stage)
+        update_model_stage(
+            cfg.deployment.mlflow_model_name,
+            version,
+            deployment_stage,
+        )
 
         decision.model_uri = model_uri
         decision.model_version = str(version)

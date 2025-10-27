@@ -59,7 +59,10 @@ class TrainingResult:
     config: PipelineConfig
 
 
-def _build_model(config: PipelineConfig, overrides: Dict[str, Any]) -> AnimalSpeciesCNN:
+def _build_model(
+    config: PipelineConfig,
+    overrides: Dict[str, Any],
+) -> AnimalSpeciesCNN:
     model_cfg = config.model.copy()
     if "dropout" in overrides:
         model_cfg.dropout = overrides["dropout"]
@@ -102,7 +105,6 @@ def _build_optimizer(
 def _build_scheduler(
     optimizer: torch.optim.Optimizer,
     config: PipelineConfig,
-    overrides: Dict[str, Any],
 ) -> Optional[torch.optim.lr_scheduler._LRScheduler]:
     sched_cfg = config.training.scheduler
     name = sched_cfg.name.lower() if sched_cfg.name else None
@@ -167,13 +169,18 @@ class TrainingPipeline(PipelineBase):
             class_weights = compute_class_weights(trial_bundle.train)
             dataloaders = build_dataloaders(
                 trial_bundle,
-                batch_size=int(params.get("batch_size", local_cfg.training.batch_size)),
+                batch_size=int(
+                    params.get(
+                        "batch_size",
+                        local_cfg.training.batch_size,
+                    )
+                ),
                 num_workers=local_cfg.data.num_workers,
             )
             model = _build_model(local_cfg, params).to(device)
             criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
             optimizer = _build_optimizer(model, local_cfg, params)
-            scheduler = _build_scheduler(optimizer, local_cfg, params)
+            scheduler = _build_scheduler(optimizer, local_cfg)
 
             scaler = torch.amp.GradScaler(
                 enabled=local_cfg.training.amp and device.type == "cuda"
@@ -244,7 +251,10 @@ class TrainingPipeline(PipelineBase):
         )
         shutdown_ray()
 
-        best_result = result_grid.get_best_result(metric=metric_key, mode=metric_mode)
+        best_result = result_grid.get_best_result(
+            metric=metric_key,
+            mode=metric_mode,
+        )
         LOGGER.info(
             "Best tuning result: f1=%.4f config=%s",
             best_result.metrics["val_macro_f1"],
@@ -256,7 +266,12 @@ class TrainingPipeline(PipelineBase):
         self, bundle: DatasetBundle, hyperparams: Dict[str, Any]
     ) -> TrainingResult:
         cfg = self.context.config
-        batch_size = int(hyperparams.get("batch_size", cfg.training.batch_size))
+        batch_size = int(
+            hyperparams.get(
+                "batch_size",
+                cfg.training.batch_size,
+            )
+        )
 
         dataloaders = build_dataloaders(
             bundle, batch_size=batch_size, num_workers=cfg.data.num_workers
@@ -267,7 +282,10 @@ class TrainingPipeline(PipelineBase):
         class_weights_device = class_weights.to(device)
         baseline_lr = float(hyperparams.get("lr", cfg.training.optimizer.lr))
         baseline_weight_decay = float(
-            hyperparams.get("weight_decay", cfg.training.optimizer.weight_decay)
+            hyperparams.get(
+                "weight_decay",
+                cfg.training.optimizer.weight_decay,
+            )
         )
         baseline_result = run_resnet50_baseline(
             dataloaders=dataloaders,
@@ -282,7 +300,7 @@ class TrainingPipeline(PipelineBase):
 
         model = _build_model(cfg, hyperparams).to(device)
         optimizer = _build_optimizer(model, cfg, hyperparams)
-        scheduler = _build_scheduler(optimizer, cfg, hyperparams)
+        scheduler = _build_scheduler(optimizer, cfg)
         criterion = nn.CrossEntropyLoss(weight=class_weights_device)
         scaler = torch.amp.GradScaler(
             enabled=cfg.training.amp and device.type == "cuda"
@@ -290,7 +308,11 @@ class TrainingPipeline(PipelineBase):
 
         experiment_name = "animal_species_multiclass"
         tags = {"pipeline": "training", "environment": cfg.environment}
-        run = start_run(experiment_name=experiment_name, run_name="training", tags=tags)
+        run = start_run(
+            experiment_name=experiment_name,
+            run_name="training",
+            tags=tags,
+        )
 
         with run:
             mlflow_pytorch.autolog(log_models=False)
@@ -407,7 +429,12 @@ class TrainingPipeline(PipelineBase):
             if not checkpoint_path.exists():
                 torch.save(model.state_dict(), checkpoint_path)
 
-            model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+            model.load_state_dict(
+                torch.load(
+                    checkpoint_path,
+                    map_location=device,
+                )
+            )
 
             val_loss, val_metrics, val_outputs = evaluate(
                 model=model,

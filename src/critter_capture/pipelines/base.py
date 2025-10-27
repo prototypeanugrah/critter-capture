@@ -31,17 +31,22 @@ class PipelineBase:
             log_file=context.config.logging.log_file,
         )
         seed_everything(context.config.training.seed)
-        LOGGER.info("Pipeline initialized with environment %s", context.config.environment)
+        LOGGER.info(
+            "Pipeline initialized with environment %s", context.config.environment
+        )
 
     def run(self) -> Dict[str, Any]:
         raise NotImplementedError
 
 
-def build_context(config_path: Path, environment: Optional[str] = None) -> PipelineContext:
+def build_context(
+    config_path: Path, environment: Optional[str] = None
+) -> PipelineContext:
     config = load_config(config_path, environment)
-    context = PipelineContext(config=config, workdir=config_path.parent, run_metadata={})
+    context = PipelineContext(
+        config=config, workdir=config_path.parent, run_metadata={}
+    )
     return context
 
 
 __all__ = ["PipelineBase", "PipelineContext", "build_context"]
-

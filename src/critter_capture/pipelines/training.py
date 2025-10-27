@@ -28,7 +28,11 @@ from critter_capture.data import (
 )
 from critter_capture.metrics.classification import ClassificationMetrics
 from critter_capture.models import AnimalSpeciesCNN
-from critter_capture.pipelines.base import PipelineBase, PipelineContext
+from critter_capture.pipelines.base import (
+    PipelineBase,
+    PipelineContext,
+    build_context,
+)
 from critter_capture.pipelines.training_loop import (
     evaluate,
     log_epoch_metrics,
@@ -50,6 +54,19 @@ LOGGER = logging.getLogger(__name__)
 
 @dataclass
 class TrainingResult:
+    """
+    Result of the training pipeline.
+
+    Args:
+        run_id (str): The ID of the run.
+        model_path (Path): The path to the model.
+        best_metrics (ClassificationMetrics): The best metrics.
+        test_metrics (ClassificationMetrics): The test metrics.
+        label_names (list[str]): The label names.
+        best_params (Dict[str, Any]): The best hyperparameters.
+        config (PipelineConfig): The configuration.
+    """
+
     run_id: str
     model_path: Path
     best_metrics: ClassificationMetrics
@@ -532,8 +549,6 @@ def run_training_pipeline(
     Returns:
         TrainingResult: The result of the training pipeline.
     """
-
-    from critter_capture.pipelines.base import build_context
 
     context = build_context(config_path, environment)
     pipeline = TrainingPipeline(

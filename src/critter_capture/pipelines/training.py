@@ -271,7 +271,7 @@ class TrainingPipeline(PipelineBase):
             dataloaders=dataloaders,
             device=device,
             num_classes=len(bundle.label_names),
-            epochs=min(cfg.training.epochs, 10),
+            epochs=min(cfg.training.epochs, 40),
             lr=baseline_lr,
             weight_decay=baseline_weight_decay,
             output_dir=Path("outputs/baseline"),
@@ -360,7 +360,8 @@ class TrainingPipeline(PipelineBase):
                 "baseline/class_weights.json",
             )
 
-            best_val_f1 = float("-inf")
+            # best_val_f1 = float("-inf")
+            best_val_acc = float("-inf")
             patience_counter = 0
             epochs = cfg.training.epochs
 
@@ -390,8 +391,8 @@ class TrainingPipeline(PipelineBase):
                 elif scheduler:
                     scheduler.step()
 
-                if val_metrics.macro_f1 > best_val_f1:
-                    best_val_f1 = val_metrics.macro_f1
+                if val_metrics.accuracy > best_val_acc:
+                    best_val_acc = val_metrics.accuracy
                     patience_counter = 0
                     torch.save(model.state_dict(), "outputs/best_model.pt")
                 else:

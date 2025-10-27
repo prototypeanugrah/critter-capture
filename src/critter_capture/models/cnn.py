@@ -7,14 +7,20 @@ from typing import Sequence
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 LOGGER = logging.getLogger(__name__)
 
 
-def _make_conv_block(in_channels: int, out_channels: int, kernel_size: int, use_batch_norm: bool) -> nn.Sequential:
+def _make_conv_block(
+    in_channels: int, out_channels: int, kernel_size: int, use_batch_norm: bool
+) -> nn.Sequential:
     layers = [
-        nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, padding=kernel_size // 2),
+        nn.Conv2d(
+            in_channels,
+            out_channels,
+            kernel_size=kernel_size,
+            padding=kernel_size // 2,
+        ),
     ]
     if use_batch_norm:
         layers.append(nn.BatchNorm2d(out_channels))
@@ -43,7 +49,12 @@ class AnimalSpeciesCNN(nn.Module):
         blocks = []
         prev_channels = in_channels
         for out_channels in filters:
-            block = _make_conv_block(prev_channels, out_channels, kernel_size, use_batch_norm)
+            block = _make_conv_block(
+                prev_channels,
+                out_channels,
+                kernel_size,
+                use_batch_norm,
+            )
             if use_spectral_norm:
                 block[0] = nn.utils.spectral_norm(block[0])
             blocks.append(block)
@@ -64,7 +75,10 @@ class AnimalSpeciesCNN(nn.Module):
     def _init_weights(self) -> None:
         for module in self.modules():
             if isinstance(module, (nn.Conv2d, nn.Linear)):
-                nn.init.kaiming_normal_(module.weight, nonlinearity="relu")
+                nn.init.kaiming_normal_(
+                    module.weight,
+                    nonlinearity="relu",
+                )
                 if module.bias is not None:
                     nn.init.constant_(module.bias, 0.0)
 
@@ -77,5 +91,6 @@ class AnimalSpeciesCNN(nn.Module):
     def predict_proba(self, x: torch.Tensor) -> torch.Tensor:
         logits = self.forward(x)
         return torch.softmax(logits, dim=1)
+
 
 __all__ = ["AnimalSpeciesCNN"]

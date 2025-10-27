@@ -8,7 +8,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from mlflow.tracking import MlflowClient
 
@@ -46,16 +46,24 @@ class DeploymentResult:
 class DeploymentPipeline(PipelineBase):
     """Extends the training pipeline with deployment orchestration."""
 
-    def __init__(self, context: PipelineContext, config_path: Path, environment: Optional[str]) -> None:
+    def __init__(
+        self, context: PipelineContext, config_path: Path, environment: Optional[str]
+    ) -> None:
         super().__init__(context)
         self._config_path = config_path
         self._environment = environment
 
     def run(self) -> DeploymentResult:
         cfg = self.context.config
-        configure_mlflow(cfg.storage.mlflow_tracking_uri, cfg.storage.mlflow_registry_uri)
+        configure_mlflow(
+            cfg.storage.mlflow_tracking_uri, cfg.storage.mlflow_registry_uri
+        )
 
-        training_pipeline = TrainingPipeline(context=self.context, config_path=self._config_path, environment=self._environment)
+        training_pipeline = TrainingPipeline(
+            context=self.context,
+            config_path=self._config_path,
+            environment=self._environment,
+        )
         training_result = training_pipeline.run()
 
         decision = self._evaluate(training_result)
@@ -67,7 +75,12 @@ class DeploymentPipeline(PipelineBase):
         else:
             LOGGER.info("Deployment skipped: %s", decision.reason)
 
-        return DeploymentResult(training=training_result, decision=decision, service_url=service_url, metadata_path=metadata_path)
+        return DeploymentResult(
+            training=training_result,
+            decision=decision,
+            service_url=service_url,
+            metadata_path=metadata_path,
+        )
 
     def _evaluate(self, training_result: TrainingResult) -> DeploymentDecision:
         cfg = self.context.config
@@ -76,22 +89,33 @@ class DeploymentPipeline(PipelineBase):
 
         precision_ok = metrics.macro_precision >= criteria.min_precision
         recall_ok = metrics.macro_recall >= criteria.min_recall
-        approved = precision_ok and recall_ok
+        accuracy_ok = metrics.accuracy >= criteria.min_accuracy
+        approved = precision_ok and recall_ok and accuracy_ok
 
-        reason = "All deployment criteria satisfied." if approved else "Deployment criteria not met."
+        reason = (
+            "All deployment criteria satisfied."
+            if approved
+            else "Deployment criteria not met."
+        )
         LOGGER.info(
-            "Deployment decision: approved=%s precision=%.3f recall=%.3f thresholds=(%.3f, %.3f)",
+            "Deployment decision: approved=%s precision=%.3f recall=%.3f accuracy=%.3f thresholds=(%.3f, %.3f, %.3f)",
             approved,
             metrics.macro_precision,
             metrics.macro_recall,
+            metrics.accuracy,
             criteria.min_precision,
             criteria.min_recall,
+            criteria.min_accuracy,
         )
 
         decision = DeploymentDecision(approved=approved, reason=reason)
 
         client = MlflowClient()
-        client.set_tag(training_result.run_id, "deployment_decision", "approved" if approved else "rejected")
+        client.set_tag(
+            training_result.run_id,
+            "deployment_decision",
+            "approved" if approved else "rejected",
+        )
         client.set_tag(training_result.run_id, "deployment_reason", reason)
 
         outputs_dir = Path("outputs")
@@ -104,18 +128,28 @@ class DeploymentPipeline(PipelineBase):
                 "macro_precision": metrics.macro_precision,
                 "macro_recall": metrics.macro_recall,
                 "macro_f1": metrics.macro_f1,
+                "accuracy": metrics.accuracy,
             },
             "thresholds": {
                 "min_precision": criteria.min_precision,
                 "min_recall": criteria.min_recall,
+                "min_accuracy": criteria.min_accuracy,
             },
         }
-        decision_path.write_text(json.dumps(decision_payload, indent=2), encoding="utf-8")
-        client.log_artifact(run_id=training_result.run_id, local_path=str(decision_path), artifact_path="deployment")
+        decision_path.write_text(
+            json.dumps(decision_payload, indent=2), encoding="utf-8"
+        )
+        client.log_artifact(
+            run_id=training_result.run_id,
+            local_path=str(decision_path),
+            artifact_path="deployment",
+        )
 
         return decision
 
-    def _deploy(self, training_result: TrainingResult, decision: DeploymentDecision) -> tuple[str, Path]:
+    def _deploy(
+        self, training_result: TrainingResult, decision: DeploymentDecision
+    ) -> tuple[str, Path]:
         cfg = self.context.config
         model_uri = f"runs:/{training_result.run_id}/model_artifact"
         version = register_model(
@@ -145,7 +179,9 @@ class DeploymentPipeline(PipelineBase):
             )
             client = MlflowClient()
             client.set_tag(training_result.run_id, "deployment_mode", mode)
-            client.set_tag(training_result.run_id, "deployed_model_version", str(version))
+            client.set_tag(
+                training_result.run_id, "deployed_model_version", str(version)
+            )
             client.set_tag(training_result.run_id, "deployed_endpoint", service_url)
             return service_url, None
 
@@ -161,8 +197,12 @@ class DeploymentPipeline(PipelineBase):
         )
         save_process_metadata(process, metadata_path)
 
-        health_url = f"http://{cfg.deployment.serving_host}:{cfg.deployment.serving_port}/ping"
-        if not wait_for_healthcheck(health_url, timeout=cfg.deployment.healthcheck_timeout):
+        health_url = (
+            f"http://{cfg.deployment.serving_host}:{cfg.deployment.serving_port}/ping"
+        )
+        if not wait_for_healthcheck(
+            health_url, timeout=cfg.deployment.healthcheck_timeout
+        ):
             LOGGER.error("Deployment failed health check.")
             raise RuntimeError("Deployment health check failed.")
 
@@ -176,12 +216,21 @@ class DeploymentPipeline(PipelineBase):
         return service_url, metadata_path
 
 
-def run_deployment_pipeline(config_path: Path, environment: Optional[str] = None) -> DeploymentResult:
+def run_deployment_pipeline(
+    config_path: Path, environment: Optional[str] = None
+) -> DeploymentResult:
     from critter_capture.pipelines.base import build_context
 
     context = build_context(config_path, environment)
-    pipeline = DeploymentPipeline(context=context, config_path=config_path, environment=environment)
+    pipeline = DeploymentPipeline(
+        context=context, config_path=config_path, environment=environment
+    )
     return pipeline.run()
 
 
-__all__ = ["DeploymentPipeline", "DeploymentDecision", "DeploymentResult", "run_deployment_pipeline"]
+__all__ = [
+    "DeploymentPipeline",
+    "DeploymentDecision",
+    "DeploymentResult",
+    "run_deployment_pipeline",
+]

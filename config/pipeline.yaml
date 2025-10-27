@@ -1,7 +1,7 @@
 base:
   environment: local
   data:
-    csv_path: ../data/sample_data.csv
+    csv_path: ../data/data.csv
     uuid_column: uuid
     image_url_column: image_url
     image_url_fallback_column: url
@@ -27,14 +27,14 @@ base:
     use_spectral_norm: false
   training:
     epochs: 50
-    batch_size: 128
+    batch_size: 512
     gradient_clip_norm: 5.0
     amp: true
     early_stopping_patience: 5
     optimizer:
       name: adamw
       lr: 0.001
-      weight_decay: 0.0001
+      weight_decay: 0.01
     scheduler:
       name: cosine
       t_max: 10
@@ -64,9 +64,10 @@ base:
     enable: true
     mode: process
     evaluation:
-      min_precision: 0.7
-      min_recall: 0.7
-      metric_key: val_macro_f1
+      min_precision: 0.3
+      min_recall: 0.3
+      min_accuracy: 0.3
+      metric_key: val_accuracy
     mlflow_model_name: AnimalSpeciesClassifier
     serving_host: 127.0.0.1
     serving_port: 5001

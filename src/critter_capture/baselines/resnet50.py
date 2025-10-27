@@ -94,7 +94,7 @@ def run_resnet50_baseline(
         model.fc.parameters(), lr=lr, weight_decay=weight_decay
     )
 
-    best_val_f1 = float("-inf")
+    best_val_acc = float("-inf")
     best_epoch = -1
     best_state: Dict[str, torch.Tensor] | None = None
     best_val = (float("inf"), None, None)  # loss, metrics, outputs
@@ -132,16 +132,16 @@ def run_resnet50_baseline(
         )
 
         LOGGER.info(
-            "Baseline epoch %d/%d - train_loss=%.4f, val_loss=%.4f, val_macro_f1=%.4f",
+            "Baseline epoch %d/%d - train_loss=%.4f, val_loss=%.4f, val_accuracy=%.4f",
             epoch,
             epochs,
             train_loss,
             val_loss,
-            val_metrics.macro_f1,
+            val_metrics.accuracy,
         )
 
-        if val_metrics.macro_f1 >= best_val_f1:
-            best_val_f1 = val_metrics.macro_f1
+        if val_metrics.accuracy >= best_val_acc:
+            best_val_acc = val_metrics.accuracy
             best_epoch = epoch
             best_state = {
                 key: value.detach().cpu() for key, value in model.state_dict().items()
@@ -152,7 +152,7 @@ def run_resnet50_baseline(
         model.load_state_dict(best_state)
     else:
         LOGGER.warning(
-            "Baseline fine-tuning did not improve validation F1; using final epoch weights."
+            "Baseline fine-tuning did not improve validation accuracy; using final epoch weights."
         )
 
     val_loss, val_metrics, val_outputs = best_val

@@ -19,10 +19,12 @@ base:
   model:
     num_classes: null
     in_channels: 3
-    conv_filters: [32, 64, 128, 256, 256]
+    conv_filters: [64, 128, 256, 512, 512]
+    conv_layers_per_block: [2, 2, 3, 3, 3]
     kernel_size: 3
-    dropout: 0.01
-    hidden_dim: 512
+    dropout: 0.3
+    hidden_dim: 1024
+    second_hidden_dim: 512
     use_batch_norm: true
     use_spectral_norm: false
   training:
@@ -95,6 +97,12 @@ base:
 
 environments:
   ci:
+    model:
+      conv_filters: [32, 64, 128, 128]
+      conv_layers_per_block: [2, 2, 2, 2]
+      hidden_dim: 512
+      second_hidden_dim: 256
+      dropout: 0.4
     training:
       epochs: 1
       batch_size: 8
@@ -103,6 +111,12 @@ environments:
     deployment:
       enable: false
   prod:
+    model:
+      conv_filters: [64, 128, 256, 512, 512]
+      conv_layers_per_block: [2, 2, 3, 3, 3]
+      hidden_dim: 1024
+      second_hidden_dim: 512
+      dropout: 0.35
     training:
       device: cuda
       epochs: 40

@@ -12,7 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class DataConfig(BaseModel):
@@ -89,24 +89,47 @@ class ModelConfig(BaseModel):
     )
     in_channels: int = Field(3, ge=1, description="Input image channels.")
     conv_filters: List[int] = Field(
-        default_factory=lambda: [32, 64, 128, 256, 256],
-        description="Number of filters for each convolution layer.",
+        default_factory=lambda: [64, 128, 256, 512, 512],
+        description="Number of filters for each convolutional block.",
+    )
+    conv_layers_per_block: List[int] = Field(
+        default_factory=lambda: [2, 2, 3, 3, 3],
+        description="Number of convolutional layers in each block (mirrors conv_filters).",
     )
     kernel_size: int = Field(3, description="Convolution kernel size.")
     dropout: float = Field(0.3, ge=0.0, le=0.8)
     hidden_dim: int = Field(
         512, ge=32, description="Number of units in the hidden layer."
     )
+    second_hidden_dim: Optional[int] = Field(
+        None,
+        ge=32,
+        description="Optional size of a second fully connected layer in the classifier head.",
+    )
     use_batch_norm: bool = Field(True, description="Use batch normalization.")
     use_spectral_norm: bool = Field(False, description="Use spectral normalization.")
 
     @field_validator("conv_filters")
     def validate_conv_filters(cls, value: List[int]) -> List[int]:
-        if len(value) != 5:
-            raise ValueError(
-                "conv_filters must contain exactly five entries for the five conv layers."
-            )
+        if not value:
+            raise ValueError("conv_filters must not be empty.")
         return value
+
+    @field_validator("conv_layers_per_block")
+    def validate_conv_layers_per_block(cls, value: List[int]) -> List[int]:
+        if not value:
+            raise ValueError("conv_layers_per_block must not be empty.")
+        if any(v < 1 for v in value):
+            raise ValueError("conv_layers_per_block entries must be >= 1.")
+        return value
+
+    @model_validator(mode="after")
+    def _ensure_conv_config_alignment(self) -> "ModelConfig":
+        if len(self.conv_layers_per_block) != len(self.conv_filters):
+            raise ValueError(
+                "conv_layers_per_block must have the same length as conv_filters."
+            )
+        return self
 
 
 class OptimizerConfig(BaseModel):

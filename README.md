@@ -5,6 +5,7 @@ This repository implements a full multi-class image classification workflow for 
 ### Repository Layout
 
 - `config/` – Pipeline configuration files (`pipeline.yaml`) with environment overrides.
+- Model architecture (filters, per-block depth, classifier widths) is controlled via `model.*` fields inside `config/pipeline.yaml`; each environment can override these values to swap between lightweight CI models and the full VGG-style backbone.
 - `src/critter_capture/` – Application code (data loaders, models, pipelines, services, utilities).
 - `app/` – Streamlit application for interactive inference and feedback capture.
 - `scripts/` – Operational scripts, including MLflow tracking server startup.

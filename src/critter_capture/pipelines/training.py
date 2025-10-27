@@ -314,24 +314,6 @@ class TrainingPipeline(PipelineBase):
                 cfg.training.optimizer.weight_decay,
             )
         )
-        baseline_result = run_resnet50_baseline(
-            dataloaders=dataloaders,
-            device=device,
-            num_classes=len(bundle.label_names),
-            epochs=min(cfg.training.epochs, 40),
-            lr=baseline_lr,
-            weight_decay=baseline_weight_decay,
-            output_dir=Path("outputs/baseline"),
-            class_weights=class_weights,
-        )
-
-        model = _build_model(cfg, hyperparams).to(device)
-        optimizer = _build_optimizer(model, cfg, hyperparams)
-        scheduler = _build_scheduler(optimizer, cfg)
-        criterion = nn.CrossEntropyLoss(weight=class_weights_device)
-        scaler = torch.amp.GradScaler(
-            enabled=cfg.training.amp and device.type == "cuda"
-        )
 
         experiment_name = "animal_species_multiclass"
         tags = {"pipeline": "training", "environment": cfg.environment}
@@ -342,7 +324,6 @@ class TrainingPipeline(PipelineBase):
         )
 
         with run:
-            mlflow_pytorch.autolog(log_models=False)
             Path("outputs").mkdir(parents=True, exist_ok=True)
             mlflow.log_params(
                 {
@@ -355,6 +336,20 @@ class TrainingPipeline(PipelineBase):
                 }
             )
             log_config(json.loads(cfg.json()))
+
+            baseline_result = run_resnet50_baseline(
+                dataloaders=dataloaders,
+                device=device,
+                num_classes=len(bundle.label_names),
+                epochs=min(cfg.training.epochs, 40),
+                lr=baseline_lr,
+                weight_decay=baseline_weight_decay,
+                scheduler_cfg=cfg.training.scheduler,
+                output_dir=Path("outputs/baseline"),
+                class_weights=class_weights,
+                mlflow_logging=True,
+            )
+
             mlflow.log_params(
                 {
                     "baseline_epochs": baseline_result.epochs,
@@ -364,37 +359,58 @@ class TrainingPipeline(PipelineBase):
                     "baseline_batch_size": batch_size,
                 }
             )
-            mlflow.log_metric("baseline_val_loss", baseline_result.val_loss)
+            metric_step = (
+                baseline_result.best_epoch
+                if baseline_result.best_epoch != -1
+                else baseline_result.epochs
+            )
             mlflow.log_metric(
-                "baseline_val_accuracy", baseline_result.val_metrics.accuracy
+                "baseline_val_loss", baseline_result.val_loss, step=metric_step
+            )
+            mlflow.log_metric(
+                "baseline_val_accuracy",
+                baseline_result.val_metrics.accuracy,
+                step=metric_step,
             )
             mlflow.log_metric(
                 "baseline_val_macro_precision",
                 baseline_result.val_metrics.macro_precision,
+                step=metric_step,
             )
             mlflow.log_metric(
                 "baseline_val_macro_recall",
                 baseline_result.val_metrics.macro_recall,
+                step=metric_step,
             )
             mlflow.log_metric(
                 "baseline_val_macro_f1",
                 baseline_result.val_metrics.macro_f1,
+                step=metric_step,
             )
-            mlflow.log_metric("baseline_test_loss", baseline_result.test_loss)
             mlflow.log_metric(
-                "baseline_test_accuracy", baseline_result.test_metrics.accuracy
+                "baseline_test_loss",
+                baseline_result.test_loss,
+                step=baseline_result.epochs,
+            )
+            mlflow.log_metric(
+                "baseline_test_accuracy",
+                baseline_result.test_metrics.accuracy,
+                step=baseline_result.epochs,
             )
             mlflow.log_metric(
                 "baseline_test_macro_precision",
                 baseline_result.test_metrics.macro_precision,
+                step=baseline_result.epochs,
             )
             mlflow.log_metric(
                 "baseline_test_macro_recall",
                 baseline_result.test_metrics.macro_recall,
+                step=baseline_result.epochs,
             )
             mlflow.log_metric(
                 "baseline_test_macro_f1",
                 baseline_result.test_metrics.macro_f1,
+                step=baseline_result.epochs,
             )
             mlflow.log_artifact(
                 str(baseline_result.model_path), artifact_path="baseline"
@@ -411,6 +427,16 @@ class TrainingPipeline(PipelineBase):
                 "baseline/class_weights.json",
             )
 
+            mlflow_pytorch.autolog(log_models=False)
+            model = _build_model(cfg, hyperparams).to(device)
+            optimizer = _build_optimizer(model, cfg, hyperparams)
+            scheduler = _build_scheduler(optimizer, cfg)
+            criterion_train = nn.CrossEntropyLoss(weight=class_weights_device)
+            criterion_eval = nn.CrossEntropyLoss()
+            scaler = torch.amp.GradScaler(
+                enabled=cfg.training.amp and device.type == "cuda"
+            )
+
             # best_val_f1 = float("-inf")
             best_val_acc = float("-inf")
             patience_counter = 0
@@ -421,7 +447,7 @@ class TrainingPipeline(PipelineBase):
                 train_loss = train_one_epoch(
                     model=model,
                     dataloader=dataloaders["train"],
-                    criterion=criterion,
+                    criterion=criterion_train,
                     optimizer=optimizer,
                     device=device,
                     scaler=scaler,
@@ -430,7 +456,7 @@ class TrainingPipeline(PipelineBase):
                 val_loss, val_metrics, _ = evaluate(
                     model=model,
                     dataloader=dataloaders["validation"],
-                    criterion=criterion,
+                    criterion=criterion_eval,
                     device=device,
                 )
 
@@ -466,13 +492,13 @@ class TrainingPipeline(PipelineBase):
             val_loss, val_metrics, val_outputs = evaluate(
                 model=model,
                 dataloader=dataloaders["validation"],
-                criterion=criterion,
+                criterion=criterion_eval,
                 device=device,
             )
             _, test_metrics, test_outputs = evaluate(
                 model=model,
                 dataloader=dataloaders["test"],
-                criterion=criterion,
+                criterion=criterion_eval,
                 device=device,
             )
 

@@ -6,11 +6,13 @@ import json
 import logging
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict, Optional
 
+import mlflow
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from torchvision.models import ResNet50_Weights, resnet50
 
@@ -18,6 +20,46 @@ from critter_capture.metrics.classification import ClassificationMetrics
 from critter_capture.pipelines.training_loop import evaluate
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _build_scheduler(
+    optimizer: torch.optim.Optimizer,
+    scheduler_cfg: Any | None,
+    epochs: int,
+) -> Optional[torch.optim.lr_scheduler._LRScheduler]:
+    if scheduler_cfg is None:
+        return None
+
+    name = getattr(scheduler_cfg, "name", None)
+    if not name:
+        return None
+
+    name = name.lower()
+    if name == "cosine":
+        t_max = getattr(scheduler_cfg, "t_max", epochs)
+        eta_min = getattr(scheduler_cfg, "min_lr", 0.0)
+        return CosineAnnealingLR(
+            optimizer,
+            T_max=t_max,
+            eta_min=eta_min,
+        )
+
+    if name == "plateau":
+        patience = getattr(scheduler_cfg, "patience", 3)
+        factor = getattr(scheduler_cfg, "factor", 0.5)
+        mode = getattr(scheduler_cfg, "mode", "max")
+        return ReduceLROnPlateau(
+            optimizer,
+            mode=mode,
+            patience=patience,
+            factor=factor,
+        )
+
+    LOGGER.warning(
+        "Unsupported scheduler '%s' provided to baseline; skipping scheduler setup.",
+        name,
+    )
+    return None
 
 
 @dataclass
@@ -62,8 +104,11 @@ def run_resnet50_baseline(
     epochs: int = 3,
     lr: float = 1e-3,
     weight_decay: float = 0.0,
+    scheduler_cfg: Any | None = None,
     output_dir: Path | None = None,
     class_weights: torch.Tensor | None = None,
+    mlflow_logging: bool = False,
+    mlflow_prefix: str = "baseline",
 ) -> ResNet50BaselineResult:
     """Fine-tune the classifier head of a pretrained ResNet-50 and evaluate it."""
 
@@ -88,16 +133,29 @@ def run_resnet50_baseline(
 
     model = _build_model(num_classes=num_classes).to(device)
     weight_tensor = class_weights.to(device) if class_weights is not None else None
-    criterion = nn.CrossEntropyLoss(weight=weight_tensor)
+    criterion_train = nn.CrossEntropyLoss(weight=weight_tensor)
+    criterion_eval = nn.CrossEntropyLoss()
 
     optimizer = torch.optim.AdamW(
-        model.fc.parameters(), lr=lr, weight_decay=weight_decay
+        model.fc.parameters(),
+        lr=lr,
+        weight_decay=weight_decay,
     )
+
+    scheduler = _build_scheduler(optimizer, scheduler_cfg, epochs)
 
     best_val_acc = float("-inf")
     best_epoch = -1
     best_state: Dict[str, torch.Tensor] | None = None
     best_val = (float("inf"), None, None)  # loss, metrics, outputs
+
+    log_metrics = mlflow_logging
+    if log_metrics and mlflow.active_run() is None:
+        LOGGER.warning(
+            "MLflow logging requested for baseline run but no active MLflow run found. "
+            "Skipping live logging."
+        )
+        log_metrics = False
 
     LOGGER.info(
         "Starting ResNet-50 baseline fine-tuning for %d epochs (lr=%.4g, weight_decay=%.4g)",
@@ -116,7 +174,7 @@ def run_resnet50_baseline(
 
             optimizer.zero_grad()
             logits = model(inputs)
-            loss = criterion(logits, targets)
+            loss = criterion_train(logits, targets)
             loss.backward()
             optimizer.step()
 
@@ -127,9 +185,15 @@ def run_resnet50_baseline(
         val_loss, val_metrics, val_outputs = evaluate(
             model=model,
             dataloader=val_loader,
-            criterion=criterion,
+            criterion=criterion_eval,
             device=device,
         )
+
+        if scheduler is not None:
+            if isinstance(scheduler, ReduceLROnPlateau):
+                scheduler.step(val_metrics.accuracy)
+            else:
+                scheduler.step()
 
         LOGGER.info(
             "Baseline epoch %d/%d - train_loss=%.4f, val_loss=%.4f, val_accuracy=%.4f",
@@ -139,6 +203,26 @@ def run_resnet50_baseline(
             val_loss,
             val_metrics.accuracy,
         )
+
+        if log_metrics:
+            mlflow.log_metric(f"{mlflow_prefix}_train_loss", train_loss, step=epoch)
+            mlflow.log_metric(f"{mlflow_prefix}_val_loss", val_loss, step=epoch)
+            mlflow.log_metric(
+                f"{mlflow_prefix}_val_accuracy", val_metrics.accuracy, step=epoch
+            )
+            mlflow.log_metric(
+                f"{mlflow_prefix}_val_macro_precision",
+                val_metrics.macro_precision,
+                step=epoch,
+            )
+            mlflow.log_metric(
+                f"{mlflow_prefix}_val_macro_recall",
+                val_metrics.macro_recall,
+                step=epoch,
+            )
+            mlflow.log_metric(
+                f"{mlflow_prefix}_val_macro_f1", val_metrics.macro_f1, step=epoch
+            )
 
         if val_metrics.accuracy >= best_val_acc:
             best_val_acc = val_metrics.accuracy
@@ -160,16 +244,35 @@ def run_resnet50_baseline(
         val_loss, val_metrics, val_outputs = evaluate(
             model=model,
             dataloader=val_loader,
-            criterion=criterion,
+            criterion=criterion_eval,
             device=device,
         )
 
     test_loss, test_metrics, test_outputs = evaluate(
         model=model,
         dataloader=test_loader,
-        criterion=criterion,
+        criterion=criterion_eval,
         device=device,
     )
+
+    if log_metrics:
+        mlflow.log_metric(f"{mlflow_prefix}_test_loss", test_loss, step=epochs)
+        mlflow.log_metric(
+            f"{mlflow_prefix}_test_accuracy", test_metrics.accuracy, step=epochs
+        )
+        mlflow.log_metric(
+            f"{mlflow_prefix}_test_macro_precision",
+            test_metrics.macro_precision,
+            step=epochs,
+        )
+        mlflow.log_metric(
+            f"{mlflow_prefix}_test_macro_recall",
+            test_metrics.macro_recall,
+            step=epochs,
+        )
+        mlflow.log_metric(
+            f"{mlflow_prefix}_test_macro_f1", test_metrics.macro_f1, step=epochs
+        )
 
     np.save(predictions_dir / "val_y_true.npy", val_outputs["y_true"])
     np.save(predictions_dir / "val_y_scores.npy", val_outputs["y_scores"])

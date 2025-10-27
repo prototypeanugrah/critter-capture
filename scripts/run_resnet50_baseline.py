@@ -119,18 +119,6 @@ def main() -> None:
     device = resolve_device(cfg.training.device)
     class_weights = compute_class_weights(bundle.train)
 
-    result = run_resnet50_baseline(
-        dataloaders=dataloaders,
-        device=device,
-        num_classes=len(bundle.label_names),
-        epochs=epochs,
-        lr=lr,
-        weight_decay=weight_decay,
-        momentum=args.momentum,
-        output_dir=args.output_dir,
-        class_weights=class_weights,
-    )
-
     run = None
     tags = {"pipeline": "baseline", "environment": cfg.environment}
     try:
@@ -139,6 +127,19 @@ def main() -> None:
             mlflow.set_tags({"baseline_logged": "true"})
         else:
             run = mlflow.start_run(run_name="baseline", tags=tags)
+
+        result = run_resnet50_baseline(
+            dataloaders=dataloaders,
+            device=device,
+            num_classes=len(bundle.label_names),
+            epochs=epochs,
+            lr=lr,
+            weight_decay=weight_decay,
+            scheduler_cfg=cfg.training.scheduler,
+            output_dir=args.output_dir,
+            class_weights=class_weights,
+            mlflow_logging=True,
+        )
 
         baseline_params = {
             "baseline_epochs": result.epochs,
@@ -166,28 +167,44 @@ def main() -> None:
                 mlflow.log_params(params_to_log)
         else:
             mlflow.log_params(baseline_params)
-        mlflow.log_metric("baseline_val_loss", result.val_loss)
-        mlflow.log_metric("baseline_val_accuracy", result.val_metrics.accuracy)
+        metric_step = result.best_epoch if result.best_epoch != -1 else result.epochs
+        mlflow.log_metric("baseline_val_loss", result.val_loss, step=metric_step)
         mlflow.log_metric(
-            "baseline_val_macro_precision", result.val_metrics.macro_precision
+            "baseline_val_accuracy", result.val_metrics.accuracy, step=metric_step
         )
         mlflow.log_metric(
-            "baseline_val_macro_recall", result.val_metrics.macro_recall
+            "baseline_val_macro_precision",
+            result.val_metrics.macro_precision,
+            step=metric_step,
         )
-        mlflow.log_metric("baseline_val_macro_f1", result.val_metrics.macro_f1)
-        mlflow.log_metric("baseline_test_loss", result.test_loss)
         mlflow.log_metric(
-            "baseline_test_accuracy", result.test_metrics.accuracy
+            "baseline_val_macro_recall",
+            result.val_metrics.macro_recall,
+            step=metric_step,
+        )
+        mlflow.log_metric(
+            "baseline_val_macro_f1", result.val_metrics.macro_f1, step=metric_step
+        )
+        mlflow.log_metric(
+            "baseline_test_loss", result.test_loss, step=result.epochs
+        )
+        mlflow.log_metric(
+            "baseline_test_accuracy", result.test_metrics.accuracy, step=result.epochs
         )
         mlflow.log_metric(
             "baseline_test_macro_precision",
             result.test_metrics.macro_precision,
+            step=result.epochs,
         )
         mlflow.log_metric(
-            "baseline_test_macro_recall", result.test_metrics.macro_recall
+            "baseline_test_macro_recall",
+            result.test_metrics.macro_recall,
+            step=result.epochs,
         )
         mlflow.log_metric(
-            "baseline_test_macro_f1", result.test_metrics.macro_f1
+            "baseline_test_macro_f1",
+            result.test_metrics.macro_f1,
+            step=result.epochs,
         )
 
         mlflow.log_artifact(str(result.model_path), artifact_path="baseline")
@@ -199,8 +216,12 @@ def main() -> None:
             {"class_weights": class_weights.tolist()},
             "baseline/class_weights.json",
         )
-    finally:
-        if run is not None:
+    except Exception:
+        if mlflow.active_run():
+            mlflow.end_run(status="FAILED")
+        raise
+    else:
+        if mlflow.active_run():
             mlflow.end_run()
 
 

@@ -7,6 +7,7 @@ import re
 import shutil
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Sequence
 from urllib.parse import urlparse
@@ -15,9 +16,8 @@ import numpy as np
 import pandas as pd
 import requests
 import torch
-from functools import lru_cache
-from requests import RequestException
 from PIL import Image
+from requests import RequestException
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset as TorchDataset
 
@@ -79,7 +79,9 @@ class ObservationsDataset(TorchDataset):
     def _load_image(self, record: ObservationRecord) -> Image.Image:
         cache_path = self._cache_dir / f"{record.uuid}.jpg"
         if not cache_path.exists():
-            if not self._download_with_retries(record.image_url, cache_path, record.uuid):
+            if not self._download_with_retries(
+                record.image_url, cache_path, record.uuid
+            ):
                 return self._placeholder_image(cache_path)
 
         try:

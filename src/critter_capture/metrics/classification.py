@@ -23,8 +23,16 @@ def compute_classification_metrics(
     y_pred: np.ndarray,
     label_names: Sequence[str],
 ) -> ClassificationMetrics:
-    macro_precision, macro_recall, macro_f1, _ = precision_recall_fscore_support(
-        y_true, y_pred, average="macro", zero_division=0
+    (
+        macro_precision,
+        macro_recall,
+        macro_f1,
+        _,
+    ) = precision_recall_fscore_support(
+        y_true,
+        y_pred,
+        average="macro",
+        zero_division=0,
     )
     accuracy = accuracy_score(y_true, y_pred)
 

@@ -139,14 +139,15 @@ class TrainingPipeline(PipelineBase):
 
         bundle = prepare_datasets(cfg.data, seed=cfg.training.seed)
         cfg.model.num_classes = len(bundle.label_names)
-        best_params = self._run_tuning_if_enabled(bundle)
+        best_params = self._run_tuning_if_enabled()
 
         LOGGER.info("Training final model with params: %s", best_params)
         result = self._train_final(bundle, best_params)
 
         return result
 
-    def _run_tuning_if_enabled(self, bundle: DatasetBundle) -> Dict[str, Any]:
+    def _run_tuning_if_enabled(self) -> Dict[str, Any]:
+        """Run hyperparameter tuning if enabled."""
         cfg = self.context.config
         tuning_cfg = cfg.tuning
 
@@ -265,6 +266,15 @@ class TrainingPipeline(PipelineBase):
     def _train_final(
         self, bundle: DatasetBundle, hyperparams: Dict[str, Any]
     ) -> TrainingResult:
+        """Train the final model.
+
+        Args:
+            bundle (DatasetBundle): The dataset bundle.
+            hyperparams (Dict[str, Any]): The hyperparameters.
+
+        Returns:
+            TrainingResult: The result of the training pipeline.
+        """
         cfg = self.context.config
         batch_size = int(
             hyperparams.get(
@@ -513,6 +523,16 @@ class TrainingPipeline(PipelineBase):
 def run_training_pipeline(
     config_path: Path, environment: Optional[str] = None
 ) -> TrainingResult:
+    """Run the training pipeline.
+
+    Args:
+        config_path (Path): The path to the configuration file.
+        environment (Optional[str], optional): The environment to use. Defaults to None.
+
+    Returns:
+        TrainingResult: The result of the training pipeline.
+    """
+
     from critter_capture.pipelines.base import build_context
 
     context = build_context(config_path, environment)

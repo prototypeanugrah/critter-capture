@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader
-from torchvision.models import ResNet50_Weights, resnet50
+from torchvision.models import ResNet18_Weights, resnet18
 
 from critter_capture.metrics.classification import ClassificationMetrics
 from critter_capture.pipelines.training_loop import evaluate
@@ -50,7 +50,7 @@ def _build_scheduler(
 
 
 @dataclass
-class ResNet50BaselineResult:
+class ResNet18BaselineResult:
     """Results from running the ResNet-50 baseline."""
 
     model_path: Path
@@ -65,10 +65,10 @@ class ResNet50BaselineResult:
 
 
 def _build_model(num_classes: int) -> nn.Module:
-    """Load torchvision ResNet-50 with ImageNet weights and reset classifier."""
+    """Load torchvision ResNet-18 with ImageNet weights and reset classifier."""
 
-    weights = ResNet50_Weights.IMAGENET1K_V2
-    model = resnet50(weights=weights)
+    weights = ResNet18_Weights.IMAGENET1K_V1
+    model = resnet18(weights=weights)
 
     for param in model.parameters():
         param.requires_grad = False
@@ -83,7 +83,7 @@ def _build_model(num_classes: int) -> nn.Module:
     return model
 
 
-def run_resnet50_baseline(
+def run_resnet18_baseline(
     dataloaders: Dict[str, DataLoader],
     device: torch.device,
     num_classes: int,
@@ -96,8 +96,8 @@ def run_resnet50_baseline(
     class_weights: torch.Tensor | None = None,
     mlflow_logging: bool = False,
     mlflow_prefix: str = "baseline",
-) -> ResNet50BaselineResult:
-    """Fine-tune the classifier head of a pretrained ResNet-50 and evaluate it."""
+) -> ResNet18BaselineResult:
+    """Fine-tune the classifier head of a pretrained ResNet-18 and evaluate it."""
 
     if (
         "train" not in dataloaders
@@ -145,7 +145,7 @@ def run_resnet50_baseline(
         log_metrics = False
 
     LOGGER.info(
-        "Starting ResNet-50 baseline fine-tuning for %d epochs (lr=%.4g, weight_decay=%.4g)",
+        "Starting ResNet-18 baseline fine-tuning for %d epochs (lr=%.4g, weight_decay=%.4g)",
         epochs,
         lr,
         weight_decay,
@@ -265,7 +265,7 @@ def run_resnet50_baseline(
     np.save(predictions_dir / "test_y_scores.npy", test_outputs["y_scores"])
     np.save(predictions_dir / "test_y_pred.npy", test_outputs["y_pred"])
 
-    model_path = output_dir / "resnet50_baseline.pt"
+    model_path = output_dir / "resnet18_baseline.pt"
     torch.save(model.state_dict(), model_path)
 
     class_weights_list = (
@@ -286,7 +286,7 @@ def run_resnet50_baseline(
     metadata_path = output_dir / "metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
-    return ResNet50BaselineResult(
+    return ResNet18BaselineResult(
         model_path=model_path,
         predictions_dir=predictions_dir,
         metadata_path=metadata_path,
@@ -299,4 +299,4 @@ def run_resnet50_baseline(
     )
 
 
-__all__ = ["ResNet50BaselineResult", "run_resnet50_baseline"]
+__all__ = ["ResNet18BaselineResult", "run_resnet18_baseline"]

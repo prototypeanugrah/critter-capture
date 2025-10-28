@@ -16,9 +16,10 @@ import torch
 import torch.nn as nn
 from mlflow import pytorch as mlflow_pytorch
 from ray.air import session
-from torch.optim.lr_scheduler import CosineAnnealingLR, ReduceLROnPlateau
+from torch.optim.lr_scheduler import OneCycleLR
+from torch.utils.data import DataLoader
 
-from critter_capture.baselines import run_resnet50_baseline
+from critter_capture.baselines import run_resnet18_baseline, run_resnet50_baseline
 from critter_capture.config import PipelineConfig
 from critter_capture.data import (
     DatasetBundle,
@@ -122,16 +123,19 @@ def _build_optimizer(
 def _build_scheduler(
     optimizer: torch.optim.Optimizer,
     config: PipelineConfig,
+    loader: DataLoader,
 ) -> Optional[torch.optim.lr_scheduler._LRScheduler]:
     sched_cfg = config.training.scheduler
     name = sched_cfg.name.lower() if sched_cfg.name else None
 
-    if name == "cosine":
-        return CosineAnnealingLR(
-            optimizer, T_max=sched_cfg.t_max, eta_min=sched_cfg.min_lr
+    if name == "onecycle":
+        max_lr = sched_cfg.max_lr
+        total_steps = config.training.epochs * len(loader)
+        return OneCycleLR(
+            optimizer,
+            max_lr=max_lr,
+            total_steps=total_steps,
         )
-    if name == "plateau":
-        return ReduceLROnPlateau(optimizer, mode="max", patience=3, factor=0.5)
     return None
 
 
@@ -198,14 +202,14 @@ class TrainingPipeline(PipelineBase):
             model = _build_model(local_cfg, params).to(device)
             criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
             optimizer = _build_optimizer(model, local_cfg, params)
-            scheduler = _build_scheduler(optimizer, local_cfg)
+            scheduler = _build_scheduler(optimizer, local_cfg, dataloaders["train"])
 
             scaler = torch.amp.GradScaler(
                 enabled=local_cfg.training.amp and device.type == "cuda"
             )
 
             max_epochs = self.context.config.tuning.max_epochs
-            best_macro_f1 = 0.0
+            best_val_acc = float("-inf")
             patience = self.context.config.training.early_stopping_patience
             patience_counter = 0
 
@@ -226,9 +230,7 @@ class TrainingPipeline(PipelineBase):
                     device=device,
                 )
 
-                if scheduler and isinstance(scheduler, ReduceLROnPlateau):
-                    scheduler.step(val_metrics.macro_f1)
-                elif scheduler:
+                if scheduler:
                     scheduler.step()
 
                 session.report(
@@ -241,8 +243,8 @@ class TrainingPipeline(PipelineBase):
                     }
                 )
 
-                if val_metrics.macro_f1 > best_macro_f1:
-                    best_macro_f1 = val_metrics.macro_f1
+                if val_metrics.accuracy > best_val_acc:
+                    best_val_acc = val_metrics.accuracy
                     patience_counter = 0
                 else:
                     patience_counter += 1
@@ -337,18 +339,34 @@ class TrainingPipeline(PipelineBase):
             )
             log_config(json.loads(cfg.json()))
 
-            baseline_result = run_resnet50_baseline(
-                dataloaders=dataloaders,
-                device=device,
-                num_classes=len(bundle.label_names),
-                epochs=min(cfg.training.epochs, 40),
-                lr=baseline_lr,
-                weight_decay=baseline_weight_decay,
-                scheduler_cfg=cfg.training.scheduler,
-                output_dir=Path("outputs/baseline"),
-                class_weights=class_weights,
-                mlflow_logging=True,
-            )
+            if cfg.training.baseline == "resnet18":
+                baseline_result = run_resnet18_baseline(
+                    dataloaders=dataloaders,
+                    device=device,
+                    num_classes=len(bundle.label_names),
+                    epochs=min(cfg.training.epochs, 40),
+                    lr=baseline_lr,
+                    weight_decay=baseline_weight_decay,
+                    scheduler_cfg=cfg.training.scheduler,
+                    output_dir=Path("outputs/baseline"),
+                    class_weights=class_weights,
+                    mlflow_logging=True,
+                )
+            elif cfg.training.baseline == "resnet50":
+                baseline_result = run_resnet50_baseline(
+                    dataloaders=dataloaders,
+                    device=device,
+                    num_classes=len(bundle.label_names),
+                    epochs=min(cfg.training.epochs, 40),
+                    lr=baseline_lr,
+                    weight_decay=baseline_weight_decay,
+                    scheduler_cfg=cfg.training.scheduler,
+                    output_dir=Path("outputs/baseline"),
+                    class_weights=class_weights,
+                    mlflow_logging=True,
+                )
+            else:
+                raise ValueError(f"Unsupported baseline: {cfg.training.baseline}")
 
             mlflow.log_params(
                 {
@@ -430,14 +448,11 @@ class TrainingPipeline(PipelineBase):
             mlflow_pytorch.autolog(log_models=False)
             model = _build_model(cfg, hyperparams).to(device)
             optimizer = _build_optimizer(model, cfg, hyperparams)
-            scheduler = _build_scheduler(optimizer, cfg)
+            scheduler = _build_scheduler(optimizer, cfg, dataloaders["train"])
             criterion_train = nn.CrossEntropyLoss(weight=class_weights_device)
             criterion_eval = nn.CrossEntropyLoss()
-            scaler = torch.amp.GradScaler(
-                enabled=cfg.training.amp and device.type == "cuda"
-            )
+            scaler = torch.amp.GradScaler(device.type)
 
-            # best_val_f1 = float("-inf")
             best_val_acc = float("-inf")
             patience_counter = 0
             epochs = cfg.training.epochs
@@ -463,9 +478,7 @@ class TrainingPipeline(PipelineBase):
                 mlflow.log_metric("train_loss", train_loss, step=epoch)
                 log_epoch_metrics("val", val_loss, val_metrics, epoch)
 
-                if scheduler and isinstance(scheduler, ReduceLROnPlateau):
-                    scheduler.step(val_metrics.macro_f1)
-                elif scheduler:
+                if scheduler:
                     scheduler.step()
 
                 if val_metrics.accuracy > best_val_acc:

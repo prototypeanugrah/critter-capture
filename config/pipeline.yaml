@@ -38,11 +38,11 @@ base:
       lr: 0.001
       weight_decay: 0.01
     scheduler:
-      name: cosine
-      t_max: 10
-      min_lr: 1.0e-06
+      name: onecycle
+      max_lr: 0.001
     seed: 42
     device: cuda
+    baseline: resnet18
   tuning:
     enabled: false
     num_samples: 16

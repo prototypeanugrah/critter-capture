@@ -29,13 +29,13 @@ base:
     use_spectral_norm: false
   training:
     epochs: 50
-    batch_size: 512
+    batch_size: 128
     gradient_clip_norm: 5.0
     amp: true
     early_stopping_patience: 5
     optimizer:
       name: adamw
-      lr: 0.001
+      lr: 0.01
       weight_decay: 0.01
     scheduler:
       name: onecycle

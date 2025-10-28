@@ -145,20 +145,32 @@ class SchedulerConfig(BaseModel):
     """Learning rate scheduler configuration."""
 
     name: Optional[str] = Field(
-        "cosine",
+        "onecycle",
         description="Scheduler name or None.",
     )
-    t_max: int = Field(
-        10,
-        ge=1,
-        description="Cosine annealing period if applicable.",
+    max_lr: Optional[float] = Field(
+        None,
+        gt=0,
+        description="Maximum learning rate used by schedulers such as OneCycleLR.",
     )
-    min_lr: float = Field(1e-6, ge=0, description="Minimum learning rate.")
+
+    @model_validator(mode="after")
+    def _validate_scheduler_params(self) -> "SchedulerConfig":
+        name = (self.name or "").lower()
+        if name == "onecycle" and self.max_lr is None:
+            raise ValueError(
+                "training.scheduler.max_lr must be provided when using the 'onecycle' scheduler."
+            )
+        return self
 
 
 class TrainingConfig(BaseModel):
     """Training loop settings."""
 
+    full_training: bool = Field(
+        True,
+        description="Whether to train the model for the full number of epochs.",
+    )
     epochs: int = Field(30, ge=1)
     batch_size: int = Field(64, ge=4)
     gradient_clip_norm: Optional[float] = Field(5.0, ge=0)

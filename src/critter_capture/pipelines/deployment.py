@@ -116,6 +116,11 @@ class DeploymentPipeline(PipelineBase):
         client = MlflowClient()
         client.set_tag(
             training_result.run_id,
+            "model_variant",
+            training_result.model_variant,
+        )
+        client.set_tag(
+            training_result.run_id,
             "deployment_decision",
             "approved" if approved else "rejected",
         )
@@ -127,6 +132,7 @@ class DeploymentPipeline(PipelineBase):
         decision_payload = {
             "approved": approved,
             "reason": reason,
+            "model_variant": training_result.model_variant,
             "metrics": {
                 "macro_precision": metrics.macro_precision,
                 "macro_recall": metrics.macro_recall,

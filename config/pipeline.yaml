@@ -28,6 +28,7 @@ base:
     use_batch_norm: true
     use_spectral_norm: false
   training:
+    full_training: false
     epochs: 50
     batch_size: 128
     gradient_clip_norm: 5.0

@@ -32,11 +32,14 @@ def train_one_epoch(
     device: torch.device,
     scaler: torch.amp.GradScaler | None = None,
     clip_norm: float | None = None,
-) -> float:
-    """Train the model for a single epoch and return the average loss."""
+    scheduler: torch.optim.lr_scheduler._LRScheduler | None = None,
+) -> tuple[float, ClassificationMetrics]:
+    """Train the model for a single epoch and return loss and metrics."""
 
     model.train()
     running_loss = 0.0
+    y_true: list[np.ndarray] = []
+    y_pred: list[np.ndarray] = []
 
     use_amp = scaler is not None and scaler.is_enabled()
 
@@ -62,10 +65,36 @@ def train_one_epoch(
                 torch.nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
             optimizer.step()
 
+        if scheduler is not None:
+            scheduler.step()
+
         running_loss += loss.item()
 
+        probs = torch.softmax(logits.detach(), dim=1)
+        y_true.append(targets.detach().cpu().numpy())
+        y_pred.append(torch.argmax(probs, dim=1).cpu().numpy())
+
     average_loss = running_loss / max(len(dataloader), 1)
-    return average_loss
+
+    if not y_true:
+        raise ValueError("Training dataloader yielded no batches.")
+
+    y_true_arr = np.concatenate(y_true, axis=0)
+    y_pred_arr = np.concatenate(y_pred, axis=0)
+
+    label_names = getattr(dataloader.dataset, "label_names", None)
+    if label_names is None:
+        raise AttributeError(
+            "Training dataset must expose 'label_names' for metric computation."
+        )
+
+    metrics = compute_classification_metrics(
+        y_true=y_true_arr,
+        y_pred=y_pred_arr,
+        label_names=label_names,
+    )
+
+    return average_loss, metrics
 
 
 def evaluate(
@@ -116,23 +145,23 @@ def evaluate(
 
 
 def log_epoch_metrics(
-    phase: str, loss: float, metrics: ClassificationMetrics, epoch: int
+    phase: str,
+    loss: float,
+    metrics: ClassificationMetrics,
+    epoch: int,
 ) -> None:
     """Log metrics to MLflow."""
 
-    mlflow.log_metric(f"{phase}_loss", loss, step=epoch)
-    mlflow.log_metric(f"{phase}_accuracy", metrics.accuracy, step=epoch)
-    mlflow.log_metric(
-        f"{phase}_macro_precision",
-        metrics.macro_precision,
-        step=epoch,
-    )
-    mlflow.log_metric(
-        f"{phase}_macro_recall",
-        metrics.macro_recall,
-        step=epoch,
-    )
-    mlflow.log_metric(f"{phase}_macro_f1", metrics.macro_f1, step=epoch)
+    metrics_list = []
+    metrics_list.append(("loss", loss))
+    metrics_list.append(("accuracy", metrics.accuracy))
+    metrics_list.append(("macro_precision", metrics.macro_precision))
+    metrics_list.append(("macro_recall", metrics.macro_recall))
+    metrics_list.append(("macro_f1", metrics.macro_f1))
+
+    for metric_name, metric_value in metrics_list:
+        mlflow.log_metric(f"{phase}_{metric_name}", metric_value, step=epoch)
+
     for label_name, stats in metrics.per_class.items():
         safe_label = re.sub(
             r"[^0-9a-zA-Z_\-./:]+", "_", label_name.lower().replace(" ", "_")

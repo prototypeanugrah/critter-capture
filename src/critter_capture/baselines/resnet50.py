@@ -17,7 +17,11 @@ from torch.utils.data import DataLoader
 from torchvision.models import ResNet50_Weights, resnet50
 
 from critter_capture.metrics.classification import ClassificationMetrics
-from critter_capture.pipelines.training_loop import evaluate
+from critter_capture.pipelines.training_loop import (
+    evaluate,
+    log_epoch_metrics,
+    train_one_epoch,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -152,22 +156,33 @@ def run_resnet50_baseline(
     )
 
     for epoch in range(1, epochs + 1):
-        model.train()
-        running_loss = 0.0
+        # model.train()
+        # running_loss = 0.0
 
-        for batch in train_loader:
-            inputs = batch["image"].to(device)
-            targets = batch["target"].to(device)
+        # for batch in train_loader:
+        #     inputs = batch["image"].to(device)
+        #     targets = batch["target"].to(device)
 
-            optimizer.zero_grad()
-            logits = model(inputs)
-            loss = criterion_train(logits, targets)
-            loss.backward()
-            optimizer.step()
+        #     optimizer.zero_grad()
+        #     logits = model(inputs)
+        #     loss = criterion_train(logits, targets)
+        #     loss.backward()
+        #     optimizer.step()
 
-            running_loss += loss.item()
+        #     running_loss += loss.item()
 
-        train_loss = running_loss / max(len(train_loader), 1)
+        # train_loss = running_loss / max(len(train_loader), 1)
+
+        train_loss, train_metrics = train_one_epoch(
+            model=model,
+            dataloader=train_loader,
+            criterion=criterion_train,
+            optimizer=optimizer,
+            device=device,
+            scheduler=scheduler,
+            scaler=None,
+            clip_norm=None,
+        )
 
         val_loss, val_metrics, val_outputs = evaluate(
             model=model,
@@ -175,9 +190,6 @@ def run_resnet50_baseline(
             criterion=criterion_eval,
             device=device,
         )
-
-        if scheduler is not None:
-            scheduler.step()
 
         LOGGER.info(
             "Baseline epoch %d/%d - train_loss=%.4f, val_loss=%.4f, val_accuracy=%.4f",
@@ -189,24 +201,36 @@ def run_resnet50_baseline(
         )
 
         if log_metrics:
-            mlflow.log_metric(f"{mlflow_prefix}_train_loss", train_loss, step=epoch)
-            mlflow.log_metric(f"{mlflow_prefix}_val_loss", val_loss, step=epoch)
-            mlflow.log_metric(
-                f"{mlflow_prefix}_val_accuracy", val_metrics.accuracy, step=epoch
+            log_epoch_metrics(
+                f"{mlflow_prefix}_train",
+                train_loss,
+                train_metrics,
+                epoch,
             )
-            mlflow.log_metric(
-                f"{mlflow_prefix}_val_macro_precision",
-                val_metrics.macro_precision,
-                step=epoch,
+            log_epoch_metrics(
+                f"{mlflow_prefix}_val",
+                val_loss,
+                val_metrics,
+                epoch,
             )
-            mlflow.log_metric(
-                f"{mlflow_prefix}_val_macro_recall",
-                val_metrics.macro_recall,
-                step=epoch,
-            )
-            mlflow.log_metric(
-                f"{mlflow_prefix}_val_macro_f1", val_metrics.macro_f1, step=epoch
-            )
+            # mlflow.log_metric(f"{mlflow_prefix}_train_loss", train_loss, step=epoch)
+            # mlflow.log_metric(f"{mlflow_prefix}_val_loss", val_loss, step=epoch)
+            # mlflow.log_metric(
+            #     f"{mlflow_prefix}_val_accuracy", val_metrics.accuracy, step=epoch
+            # )
+            # mlflow.log_metric(
+            #     f"{mlflow_prefix}_val_macro_precision",
+            #     val_metrics.macro_precision,
+            #     step=epoch,
+            # )
+            # mlflow.log_metric(
+            #     f"{mlflow_prefix}_val_macro_recall",
+            #     val_metrics.macro_recall,
+            #     step=epoch,
+            # )
+            # mlflow.log_metric(
+            #     f"{mlflow_prefix}_val_macro_f1", val_metrics.macro_f1, step=epoch
+            # )
 
         if val_metrics.accuracy >= best_val_acc:
             best_val_acc = val_metrics.accuracy
@@ -240,23 +264,29 @@ def run_resnet50_baseline(
     )
 
     if log_metrics:
-        mlflow.log_metric(f"{mlflow_prefix}_test_loss", test_loss, step=epochs)
-        mlflow.log_metric(
-            f"{mlflow_prefix}_test_accuracy", test_metrics.accuracy, step=epochs
+        log_epoch_metrics(
+            f"{mlflow_prefix}_test",
+            test_loss,
+            test_metrics,
+            epochs,
         )
-        mlflow.log_metric(
-            f"{mlflow_prefix}_test_macro_precision",
-            test_metrics.macro_precision,
-            step=epochs,
-        )
-        mlflow.log_metric(
-            f"{mlflow_prefix}_test_macro_recall",
-            test_metrics.macro_recall,
-            step=epochs,
-        )
-        mlflow.log_metric(
-            f"{mlflow_prefix}_test_macro_f1", test_metrics.macro_f1, step=epochs
-        )
+        # mlflow.log_metric(f"{mlflow_prefix}_test_loss", test_loss, step=epochs)
+        # mlflow.log_metric(
+        #     f"{mlflow_prefix}_test_accuracy", test_metrics.accuracy, step=epochs
+        # )
+        # mlflow.log_metric(
+        #     f"{mlflow_prefix}_test_macro_precision",
+        #     test_metrics.macro_precision,
+        #     step=epochs,
+        # )
+        # mlflow.log_metric(
+        #     f"{mlflow_prefix}_test_macro_recall",
+        #     test_metrics.macro_recall,
+        #     step=epochs,
+        # )
+        # mlflow.log_metric(
+        #     f"{mlflow_prefix}_test_macro_f1", test_metrics.macro_f1, step=epochs
+        # )
 
     np.save(predictions_dir / "val_y_true.npy", val_outputs["y_true"])
     np.save(predictions_dir / "val_y_scores.npy", val_outputs["y_scores"])
@@ -265,7 +295,7 @@ def run_resnet50_baseline(
     np.save(predictions_dir / "test_y_scores.npy", test_outputs["y_scores"])
     np.save(predictions_dir / "test_y_pred.npy", test_outputs["y_pred"])
 
-    model_path = output_dir / "resnet50_baseline.pt"
+    model_path = output_dir / f"{mlflow_prefix}.pt"
     torch.save(model.state_dict(), model_path)
 
     class_weights_list = (

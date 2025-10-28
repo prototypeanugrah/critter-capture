@@ -16,7 +16,10 @@ from mlflow.tracking import MlflowClient
 LOGGER = logging.getLogger(__name__)
 
 
-def configure_mlflow(tracking_uri: str, registry_uri: Optional[str] = None) -> None:
+def configure_mlflow(
+    tracking_uri: str,
+    registry_uri: Optional[str] = None,
+) -> None:
     """Configure MLflow tracking URIs."""
 
     mlflow.set_tracking_uri(tracking_uri)
@@ -38,7 +41,11 @@ def start_run(
     return run
 
 
-def log_dict_artifact(data: Dict, artifact_path: str, filename: str) -> None:
+def log_dict_artifact(
+    data: Dict,
+    artifact_path: str,
+    filename: str,
+) -> None:
     """Persist a dictionary artifact to the MLflow run."""
 
     temp_path = Path("outputs") / artifact_path
@@ -49,31 +56,65 @@ def log_dict_artifact(data: Dict, artifact_path: str, filename: str) -> None:
 
 
 def log_config(config: Dict) -> None:
-    log_dict_artifact(config, artifact_path="config", filename="config.json")
+    log_dict_artifact(
+        config,
+        artifact_path="config",
+        filename="config.json",
+    )
 
 
 def register_model(
-    model_uri: str, model_name: str, run_id: str, stage: Optional[str] = None
+    model_uri: str,
+    model_name: str,
+    run_id: str,
+    stage: Optional[str] = None,
 ) -> str:
-    client = MlflowClient()
-    result = client.create_model_version(
-        name=model_name, source=model_uri, run_id=run_id
-    )
+    try:
+        # ``mlflow.register_model`` ensures the registered model exists before
+        # creating a new version, which avoids flaky 5xx responses from the
+        # registry when the model has not been created yet.
+        result = mlflow.register_model(
+            model_uri=model_uri,
+            name=model_name,
+        )
+    except Exception:  # pragma: no cover - surfaced to callers with context
+        LOGGER.exception(
+            "Failed to register model '%s' from run %s using URI %s",
+            model_name,
+            run_id,
+            model_uri,
+        )
+        raise
+
     if stage:
+        client = MlflowClient()
         client.transition_model_version_stage(
-            name=model_name, version=result.version, stage=stage, archive_existing=True
+            name=model_name,
+            version=result.version,
+            stage=stage,
+            archive_existing=True,
         )
     LOGGER.info("Registered model %s version %s", model_name, result.version)
     return result.version
 
 
-def update_model_stage(model_name: str, model_version: str | int, stage: str) -> None:
+def update_model_stage(
+    model_name: str,
+    model_version: str | int,
+    stage: str,
+) -> None:
     client = MlflowClient()
     client.transition_model_version_stage(
-        name=model_name, version=int(model_version), stage=stage, archive_existing=True
+        name=model_name,
+        version=int(model_version),
+        stage=stage,
+        archive_existing=True,
     )
     LOGGER.info(
-        "Moved model %s version %s to stage %s", model_name, model_version, stage
+        "Moved model %s version %s to stage %s",
+        model_name,
+        model_version,
+        stage,
     )
 
 

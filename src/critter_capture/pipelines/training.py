@@ -370,7 +370,7 @@ class TrainingPipeline(PipelineBase):
                     dataloaders=dataloaders,
                     device=device,
                     num_classes=len(bundle.label_names),
-                    epochs=min(cfg.training.epochs, 10),
+                    epochs=min(cfg.training.epochs, 5),
                     lr=baseline_lr,
                     weight_decay=baseline_weight_decay,
                     scheduler_cfg=cfg.training.scheduler,

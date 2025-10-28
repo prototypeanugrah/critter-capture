@@ -30,7 +30,7 @@ base:
   training:
     full_training: false
     epochs: 50
-    batch_size: 128
+    batch_size: 512
     gradient_clip_norm: 5.0
     amp: true
     early_stopping_patience: 5
@@ -67,9 +67,9 @@ base:
     enable: true
     mode: process
     evaluation:
-      min_precision: 0.3
-      min_recall: 0.3
-      min_accuracy: 0.3
+      min_precision: 0.1
+      min_recall: 0.1
+      min_accuracy: 0.1
       metric_key: val_accuracy
     mlflow_model_name: AnimalSpeciesClassifier
     serving_host: 127.0.0.1

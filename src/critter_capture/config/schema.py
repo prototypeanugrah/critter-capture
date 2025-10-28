@@ -174,6 +174,19 @@ class TrainingConfig(BaseModel):
         "cuda" if False else "cpu",
         description="Preferred device (cpu or cuda).",
     )
+    baseline: str = Field(
+        "resnet18",
+        description="Baseline architecture to fine-tune before custom model training.",
+    )
+
+    @field_validator("baseline")
+    def validate_baseline(cls, value: str) -> str:
+        allowed = {"resnet18", "resnet50"}
+        if value not in allowed:
+            raise ValueError(
+                "training.baseline must be one of {'resnet18', 'resnet50'}."
+            )
+        return value
 
 
 class TuneConfig(BaseModel):

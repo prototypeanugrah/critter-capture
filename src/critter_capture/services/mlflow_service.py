@@ -11,6 +11,7 @@ from typing import Dict, Optional
 
 import mlflow
 from mlflow.entities import Run
+from mlflow.exceptions import MlflowException
 from mlflow.tracking import MlflowClient
 
 LOGGER = logging.getLogger(__name__)
@@ -77,7 +78,29 @@ def register_model(
             model_uri=model_uri,
             name=model_name,
         )
-    except Exception:  # pragma: no cover - surfaced to callers with context
+    except MlflowException as exc:
+        tracking_uri = mlflow.get_tracking_uri()
+        unsupported = getattr(exc, "error_code", None) == "UNSUPPORTED_OPERATION"
+        msg = str(exc)
+        if unsupported or "model registry functionality requires" in msg.lower():
+            guidance = (
+                "MLflow model registry operations require the tracking server to use "
+                "a database-backed store (e.g., SQLite, MySQL, PostgreSQL). "
+                f"The current tracking URI '{tracking_uri}' does not support model registry. "
+                "Restart the MLflow server with a database backend (for example: "
+                "`mlflow server --backend-store-uri sqlite:///mlruns/mlflow.db "
+                "--default-artifact-root mlruns/artifacts`) or disable deployment."
+            )
+            LOGGER.error(guidance)
+            raise RuntimeError(guidance) from exc
+        LOGGER.exception(
+            "Failed to register model '%s' from run %s using URI %s",
+            model_name,
+            run_id,
+            model_uri,
+        )
+        raise
+    except Exception:
         LOGGER.exception(
             "Failed to register model '%s' from run %s using URI %s",
             model_name,

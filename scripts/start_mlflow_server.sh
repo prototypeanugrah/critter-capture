@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WORKDIR="$(dirname "$0")/.."
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+WORKDIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DEFAULT_BACKEND_STORE_URI="file://${WORKDIR}/mlruns"
 DEFAULT_REGISTRY_STORE_URI="sqlite:///${WORKDIR}/mlruns/mlflow.db"
 DEFAULT_ARTIFACT_ROOT="${WORKDIR}/mlruns/artifacts"

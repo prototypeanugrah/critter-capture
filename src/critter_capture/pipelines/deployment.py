@@ -12,6 +12,8 @@ from typing import Optional
 
 from mlflow.tracking import MlflowClient
 
+from critter_capture.config import load_config
+from critter_capture.metrics.classification import ClassificationMetrics
 from critter_capture.pipelines.base import PipelineBase, PipelineContext
 from critter_capture.pipelines.training import TrainingPipeline, TrainingResult
 from critter_capture.services import (
@@ -43,6 +45,65 @@ class DeploymentResult:
     metadata_path: Optional[Path]
 
 
+def _resolve_checkpoint_path(download_path: Path) -> Path:
+    """Return a stable path to the checkpoint file inside the MLflow artifact."""
+
+    if download_path.is_file():
+        return download_path
+
+    candidates = sorted(
+        (
+            path
+            for suffix in (".pt", ".pth", ".bin")
+            for path in download_path.rglob(f"*{suffix}")
+        ),
+        key=lambda p: p.name,
+    )
+    if candidates:
+        return candidates[0]
+
+    fallback_files = sorted(path for path in download_path.rglob("*") if path.is_file())
+    if fallback_files:
+        return fallback_files[0]
+
+    raise FileNotFoundError(
+        f"Failed to locate checkpoint file in downloaded artifact at {download_path}"
+    )
+
+
+def load_training_result_from_run(
+    run_id: str,
+    config_path: Path,
+    environment: str | None,
+) -> TrainingResult:
+    cfg = load_config(config_path, environment)
+
+    client = MlflowClient()
+    cache_dir = Path("outputs/mlflow_cache") / run_id
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    metadata_path = Path(
+        client.download_artifacts(run_id, "metadata/metadata.json", str(cache_dir))
+    )
+    raw_model_path = Path(client.download_artifacts(run_id, "model", str(cache_dir)))
+    checkpoint_path = _resolve_checkpoint_path(raw_model_path)
+
+    metadata = json.loads(metadata_path.read_text())
+    best_metrics = ClassificationMetrics(**metadata["validation_metrics"])
+    test_metrics = ClassificationMetrics(**metadata["test_metrics"])
+
+    return TrainingResult(
+        run_id=run_id,
+        model_path=checkpoint_path,
+        best_metrics=best_metrics,
+        test_metrics=test_metrics,
+        label_names=metadata["label_names"],
+        best_params=metadata["best_params"],
+        config=cfg,
+        model_variant=metadata["model_variant"],
+    )
+
+
 class DeploymentPipeline(PipelineBase):
     """Extends the training pipeline with deployment orchestration."""
 
@@ -51,10 +112,12 @@ class DeploymentPipeline(PipelineBase):
         context: PipelineContext,
         config_path: Path,
         environment: Optional[str],
+        run_id: Optional[str] = None,
     ) -> None:
         super().__init__(context)
         self._config_path = config_path
         self._environment = environment
+        self._run_id = run_id
 
     def run(self) -> DeploymentResult:
         cfg = self.context.config
@@ -62,12 +125,19 @@ class DeploymentPipeline(PipelineBase):
             cfg.storage.mlflow_tracking_uri, cfg.storage.mlflow_registry_uri
         )
 
-        training_pipeline = TrainingPipeline(
-            context=self.context,
-            config_path=self._config_path,
-            environment=self._environment,
-        )
-        training_result = training_pipeline.run()
+        if self._run_id is None:
+            training_pipeline = TrainingPipeline(
+                context=self.context,
+                config_path=self._config_path,
+                environment=self._environment,
+            )
+            training_result = training_pipeline.run()
+        else:
+            training_result = load_training_result_from_run(
+                run_id=self._run_id,
+                config_path=self._config_path,
+                environment=self._environment,
+            )
 
         decision = self._evaluate(training_result)
         service_url = None
@@ -230,13 +300,18 @@ class DeploymentPipeline(PipelineBase):
 
 
 def run_deployment_pipeline(
-    config_path: Path, environment: Optional[str] = None
+    config_path: Path,
+    environment: Optional[str] = None,
+    run_id: Optional[str] = None,
 ) -> DeploymentResult:
     from critter_capture.pipelines.base import build_context
 
     context = build_context(config_path, environment)
     pipeline = DeploymentPipeline(
-        context=context, config_path=config_path, environment=environment
+        context=context,
+        config_path=config_path,
+        environment=environment,
+        run_id=run_id,
     )
     return pipeline.run()
 

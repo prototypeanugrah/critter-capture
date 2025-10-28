@@ -592,6 +592,7 @@ class TrainingPipeline(PipelineBase):
             mlflow.set_tag("model_variant", final_model_variant)
 
             # Log final validation and test metrics
+            LOGGER.info("Logging final validation and test metrics")
             mlflow.log_metric(
                 "final_val_accuracy",
                 final_val_metrics.accuracy,
@@ -626,11 +627,16 @@ class TrainingPipeline(PipelineBase):
             )
 
             # Log final model and artifacts
+            LOGGER.info("Logging final model and artifacts")
             mlflow.log_artifact(str(final_model_path), artifact_path="model")
             mlflow_pytorch.log_model(
                 final_model.to("cpu"), artifact_path="model_artifact"
             )
 
+            LOGGER.info("Logging predictions")
+            mlflow.log_artifacts(str(predictions_dir), artifact_path="predictions")
+
+            LOGGER.info("Logging metadata for final model")
             metadata = {
                 "label_names": bundle.label_names,
                 "label_ids": list(bundle.label_ids),
@@ -652,7 +658,6 @@ class TrainingPipeline(PipelineBase):
                     "weight_decay": baseline_weight_decay,
                 },
             }
-            mlflow.log_artifacts(str(predictions_dir), artifact_path="predictions")
 
             metadata_path = Path("outputs/metadata.json")
             metadata_path.write_text(

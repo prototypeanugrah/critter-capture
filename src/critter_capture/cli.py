@@ -33,6 +33,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Configuration environment override (e.g., local, ci, prod).",
     )
+    parser.add_argument(
+        "--run-id",
+        type=str,
+        default=None,
+        help="Run ID to load training result from.",
+    )
     return parser
 
 
@@ -43,7 +49,7 @@ def main(argv: list[str] | None = None) -> None:
     if args.pipeline == "train":
         run_training_pipeline(args.config, args.env)
     elif args.pipeline == "deploy":
-        run_deployment_pipeline(args.config, args.env)
+        run_deployment_pipeline(args.config, args.env, args.run_id)
     elif args.pipeline == "inference":
         run_inference_pipeline(args.config, args.env)
     else:

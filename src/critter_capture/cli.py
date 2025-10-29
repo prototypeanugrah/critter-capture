@@ -10,7 +10,7 @@ from critter_capture.pipelines import (
     run_inference_pipeline,
     run_training_pipeline,
 )
-from critter_capture.zenml import (
+from critter_capture.zenml_support import (
     run_deployment_pipeline_with_zenml,
     run_inference_pipeline_with_zenml,
     run_training_pipeline_with_zenml,

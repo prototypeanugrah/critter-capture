@@ -115,10 +115,9 @@ def register_model(
             name=model_name,
             version=result.version,
             stage=stage,
-            archive_existing=True,
         )
     LOGGER.info("Registered model %s version %s", model_name, result.version)
-    return result.version
+    return str(result.version)
 
 
 def update_model_stage(
@@ -126,12 +125,23 @@ def update_model_stage(
     model_version: str | int,
     stage: str,
 ) -> None:
+    """Move a model version to a new stage.
+
+    Args:
+        model_name (str): The name of the model.
+        model_version (str | int): The version of the model.
+        stage (str): The stage to move the model to. It can be one of:
+            - "None"
+            - "Staging"
+            - "Production"
+            - "Archived"
+    """
+
     client = MlflowClient()
     client.transition_model_version_stage(
         name=model_name,
         version=int(model_version),
         stage=stage,
-        archive_existing=True,
     )
     LOGGER.info(
         "Moved model %s version %s to stage %s",

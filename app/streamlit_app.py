@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import tempfile
 from pathlib import Path
-from typing import Dict, List
+from typing import List
 
 import numpy as np
 import streamlit as st
@@ -21,7 +20,10 @@ from critter_capture.utils.env import load_env_file
 
 
 @st.cache_resource
-def get_config(path: str = "config/pipeline.yaml", environment: str | None = None):
+def get_config(
+    path: str = "config/pipeline.yaml",
+    environment: str | None = None,
+):
     return load_config(Path(path), environment)
 
 
@@ -41,11 +43,17 @@ def get_label_names() -> List[str] | None:
 
 @st.cache_resource
 def get_transforms(image_size: int):
-    _, eval_transform = build_transforms(image_size=image_size, augment=False)
+    _, eval_transform = build_transforms(
+        image_size=image_size,
+        augment=False,
+    )
     return eval_transform
 
 
-async def request_prediction(url: str, tensor: torch.Tensor) -> List[List[float]]:
+async def request_prediction(
+    url: str,
+    tensor: torch.Tensor,
+) -> List[List[float]]:
     import httpx
 
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -75,7 +83,12 @@ def main() -> None:
 
         with st.spinner("Querying model..."):
             try:
-                predictions = asyncio.run(request_prediction(service_url, tensor))
+                predictions = asyncio.run(
+                    request_prediction(
+                        service_url,
+                        tensor,
+                    )
+                )
             except Exception as exc:  # noqa: BLE001
                 st.error(f"Failed to fetch prediction: {exc}")
                 st.stop()
@@ -96,11 +109,20 @@ def main() -> None:
         st.table(prob_rows)
 
         predicted_label = labels[sorted_indices[0]]
-        st.markdown(f"**Top prediction:** {predicted_label} (p={scores[sorted_indices[0]]:.3f})")
+        st.markdown(
+            f"**Top prediction:** {predicted_label} (p={scores[sorted_indices[0]]:.3f})"
+        )
 
         st.subheader("Feedback")
-        correct_label = st.selectbox("Select the correct label", options=labels, index=sorted_indices[0])
-        feedback_quality = st.selectbox("How accurate was the prediction?", ["great", "good", "fair", "poor"])
+        correct_label = st.selectbox(
+            "Select the correct label",
+            options=labels,
+            index=sorted_indices[0],
+        )
+        feedback_quality = st.selectbox(
+            "How accurate was the prediction?",
+            ["great", "good", "fair", "poor"],
+        )
         submit = st.button("Submit Feedback")
 
         if submit:
@@ -110,7 +132,13 @@ def main() -> None:
                 image.save(image_path)
 
                 metadata = {
-                    "predictions": {label: float(prob) for label, prob in zip(labels, scores)},
+                    "predictions": {
+                        label: float(prob)
+                        for label, prob in zip(
+                            labels,
+                            scores,
+                        )
+                    },
                     "predicted_label": predicted_label,
                     "selected_label": correct_label,
                     "feedback_quality": feedback_quality,

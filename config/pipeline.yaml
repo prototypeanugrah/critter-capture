@@ -92,6 +92,14 @@ base:
     mlflow_registry_uri: null
     s3_bucket: animal-species-feedback
     s3_region: us-east-1
+  validation:
+    enable: true
+    deepchecks:
+      enabled: true
+      output_dir: ../outputs/validation
+      html_report_name: deepchecks_report.html
+      max_samples_per_split: 2000
+      random_seed: 42
   metadata:
     author: ml-team
     description: Animal species classification pipeline

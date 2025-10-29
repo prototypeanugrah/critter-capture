@@ -35,7 +35,10 @@ def start_mlflow_server(model_uri: str, host: str, port: int, env: Optional[Dict
         "--no-conda",
     ]
     LOGGER.info("Starting MLflow serving: %s", " ".join(command))
-    process = subprocess.Popen(command, env=env)
+    combined_env = os.environ.copy()
+    if env:
+        combined_env.update(env)
+    process = subprocess.Popen(command, env=combined_env)
     return process
 
 

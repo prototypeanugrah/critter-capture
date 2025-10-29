@@ -7,7 +7,7 @@ requires-python = "==3.12.11"
 dependencies = [
     "ipykernel>=6.29.0",
     "matplotlib>=3.7.1",
-    "numpy>=1.24.0",
+    "numpy==2.3.0",
     "pandas>=2.0.0",
     "pillow>=9.5.0",
     "pyyaml>=6.0.1",
@@ -30,11 +30,13 @@ dependencies = [
     "orjson>=3.9.0",
     "pytest>=8.4.2",
     "nvitop>=1.5.3",
+    "deepchecks[vision]>=0.18.0",
+    "setuptools>=67,<81",
 ]
 
 
 [build-system]
-requires = ["setuptools>=67", "wheel"]
+requires = ["setuptools>=67,<81", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]

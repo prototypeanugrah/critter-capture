@@ -230,14 +230,17 @@ class DeploymentPipeline(PipelineBase):
         self, training_result: TrainingResult, decision: DeploymentDecision
     ) -> tuple[str, Path]:
         cfg = self.context.config
-        model_uri = f"runs:/{training_result.run_id}/model_artifact"
+        run_model_uri = f"runs:/{training_result.run_id}/model_artifact"
         version = register_model(
-            model_uri=model_uri,
+            model_uri=run_model_uri,
             model_name=cfg.deployment.mlflow_model_name,
             run_id=training_result.run_id,
             stage=None,
         )
 
+        registry_model_uri = (
+            f"models:/{cfg.deployment.mlflow_model_name}/{version}"
+        )
         deployment_stage = "Production"
         update_model_stage(
             cfg.deployment.mlflow_model_name,
@@ -245,13 +248,18 @@ class DeploymentPipeline(PipelineBase):
             deployment_stage,
         )
 
-        decision.model_uri = model_uri
+        decision.model_uri = registry_model_uri
         decision.model_version = str(version)
 
         mode = cfg.deployment.mode
         service_url = (
             cfg.deployment.external_service_url
             or f"http://{cfg.deployment.serving_host}:{cfg.deployment.serving_port}/invocations"
+        )
+        deployed_model_uri = (
+            f"models:/{cfg.deployment.mlflow_model_name}/{deployment_stage}"
+            if deployment_stage
+            else registry_model_uri
         )
 
         if mode == "external":
@@ -265,6 +273,9 @@ class DeploymentPipeline(PipelineBase):
             client.set_tag(
                 training_result.run_id, "deployed_model_version", str(version)
             )
+            client.set_tag(
+                training_result.run_id, "deployed_model_uri", deployed_model_uri
+            )
             client.set_tag(training_result.run_id, "deployed_endpoint", service_url)
             return service_url, None
 
@@ -272,11 +283,24 @@ class DeploymentPipeline(PipelineBase):
         metadata_path.parent.mkdir(parents=True, exist_ok=True)
         stop_existing_process(metadata_path)
 
+        server_env = dict(cfg.deployment.server_env or {})
+        server_env.setdefault("MLFLOW_TRACKING_URI", cfg.storage.mlflow_tracking_uri)
+        if cfg.storage.mlflow_registry_uri:
+            server_env.setdefault("MLFLOW_REGISTRY_URI", cfg.storage.mlflow_registry_uri)
+        else:
+            server_env.setdefault("MLFLOW_REGISTRY_URI", cfg.storage.mlflow_tracking_uri)
+
+        LOGGER.info(
+            "Starting local serving for model URI %s (alias %s)",
+            registry_model_uri,
+            deployed_model_uri,
+        )
+
         process = start_mlflow_server(
-            model_uri=model_uri,
+            model_uri=deployed_model_uri,
             host=cfg.deployment.serving_host,
             port=cfg.deployment.serving_port,
-            env=cfg.deployment.server_env or None,
+            env=server_env,
         )
         save_process_metadata(process, metadata_path)
 
@@ -293,6 +317,7 @@ class DeploymentPipeline(PipelineBase):
 
         client = MlflowClient()
         client.set_tag(training_result.run_id, "deployed_model_version", str(version))
+        client.set_tag(training_result.run_id, "deployed_model_uri", deployed_model_uri)
         client.set_tag(training_result.run_id, "deployed_endpoint", service_url)
         client.set_tag(training_result.run_id, "deployment_mode", mode)
 

@@ -138,6 +138,7 @@ class DeploymentPipeline(PipelineBase):
         decision = self._evaluate(training_result)
         service_url = None
         metadata_path = None
+        model_version: Optional[str] = None
 
         if decision.approved and cfg.deployment.enable:
             model_version = self._deploy(training_result, decision)
@@ -230,12 +231,13 @@ class DeploymentPipeline(PipelineBase):
         model_variant = training_result.model_variant
         run_model_uri = f"runs:/{training_result.run_id}/model_artifact"
 
+        model_version: Optional[str] = None
         if decision.approved:
             model_version = register_model(
                 model_uri=run_model_uri,
                 model_name=f"{cfg.deployment.mlflow_model_name}_{model_variant}",
             )
-        return str(model_version)
+        return model_version
 
         # registry_model_uri = f"models:/{f"{cfg.deployment.mlflow_model_name}_{model_variant}"}/{version}"
         # deployment_stage = "Production"

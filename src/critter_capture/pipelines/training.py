@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+import mlflow
 import numpy as np
 import torch
 import torch.nn as nn
@@ -19,7 +20,6 @@ from ray.air import session
 from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader
 from torchvision.models import resnet18, resnet50
-from zenml.steps import step
 
 from critter_capture.baselines import run_resnet18_baseline, run_resnet50_baseline
 from critter_capture.config import PipelineConfig
@@ -305,7 +305,6 @@ class TrainingPipeline(PipelineBase):
         )
         return dict(best_result.config)
 
-    @step(experiment_tracker="mlflow_tracker")
     def _train_final(
         self, bundle: DatasetBundle, hyperparams: Dict[str, Any]
     ) -> TrainingResult:
@@ -318,6 +317,7 @@ class TrainingPipeline(PipelineBase):
         Returns:
             TrainingResult: The result of the training pipeline.
         """
+
         cfg = self.context.config
         batch_size = int(
             hyperparams.get(
@@ -345,329 +345,366 @@ class TrainingPipeline(PipelineBase):
 
         experiment_name = cfg.training.experiment_name
         tags = {"pipeline": "training", "environment": cfg.environment}
-        run = start_run(
-            experiment_name=experiment_name,
-            run_name="training",
-            tags=tags,
+
+        run = mlflow.active_run()
+        run_started_here = False
+        if run is None:
+            run = start_run(
+                experiment_name=experiment_name,
+                run_name="training",
+                tags=tags,
+            )
+            run_started_here = True
+        else:
+            if tags:
+                mlflow.set_tags(tags)
+
+        try:
+            result = self._execute_training_run(
+                bundle=bundle,
+                hyperparams=hyperparams,
+                dataloaders=dataloaders,
+                class_weights=class_weights,
+                class_weights_device=class_weights_device,
+                device=device,
+                baseline_lr=baseline_lr,
+                baseline_weight_decay=baseline_weight_decay,
+            )
+        except Exception:
+            if run_started_here and mlflow.active_run():
+                mlflow.end_run(status="FAILED")
+            raise
+        else:
+            if run_started_here and mlflow.active_run():
+                mlflow.end_run()
+        return result
+
+    def _execute_training_run(
+        self,
+        bundle: DatasetBundle,
+        hyperparams: Dict[str, Any],
+        dataloaders: Dict[str, DataLoader],
+        class_weights: torch.Tensor,
+        class_weights_device: torch.Tensor,
+        device: torch.device,
+        baseline_lr: float,
+        baseline_weight_decay: float,
+    ) -> TrainingResult:
+        """Internal helper that carries out training under an active MLflow run."""
+
+        cfg = self.context.config
+        Path("outputs").mkdir(parents=True, exist_ok=True)
+
+        train_batch_size = dataloaders["train"].batch_size or cfg.training.batch_size
+        mlflow.log_params(
+            {
+                "batch_size": train_batch_size,
+                "dropout": hyperparams.get("dropout", cfg.model.dropout),
+                "lr": hyperparams.get("lr", cfg.training.optimizer.lr),
+                "weight_decay": hyperparams.get(
+                    "weight_decay", cfg.training.optimizer.weight_decay
+                ),
+            }
         )
+        log_config(json.loads(cfg.json()))
 
-        with run:
-            Path("outputs").mkdir(parents=True, exist_ok=True)
-            # mlflow.log_params(
-            #     {
-            #         "batch_size": batch_size,
-            #         "dropout": hyperparams.get("dropout", cfg.model.dropout),
-            #         "lr": hyperparams.get("lr", cfg.training.optimizer.lr),
-            #         "weight_decay": hyperparams.get(
-            #             "weight_decay", cfg.training.optimizer.weight_decay
-            #         ),
-            #     }
-            # )
-            log_config(json.loads(cfg.json()))
+        if cfg.training.baseline == "resnet18":
+            baseline_result = run_resnet18_baseline(
+                dataloaders=dataloaders,
+                device=device,
+                num_classes=len(bundle.label_names),
+                epochs=min(cfg.training.epochs, 5),
+                lr=baseline_lr,
+                weight_decay=baseline_weight_decay,
+                scheduler_cfg=cfg.training.scheduler,
+                output_dir=Path("outputs/baseline"),
+                class_weights=class_weights,
+                mlflow_logging=False,
+                mlflow_prefix="baseline_resnet18",
+            )
+        elif cfg.training.baseline == "resnet50":
+            baseline_result = run_resnet50_baseline(
+                dataloaders=dataloaders,
+                device=device,
+                num_classes=len(bundle.label_names),
+                epochs=min(cfg.training.epochs, 5),
+                lr=baseline_lr,
+                weight_decay=baseline_weight_decay,
+                scheduler_cfg=cfg.training.scheduler,
+                output_dir=Path("outputs/baseline"),
+                class_weights=class_weights,
+                mlflow_logging=False,
+                mlflow_prefix="baseline_resnet50",
+            )
+        else:
+            raise ValueError(f"Unsupported baseline: {cfg.training.baseline}")
 
-            if cfg.training.baseline == "resnet18":
-                baseline_result = run_resnet18_baseline(
-                    dataloaders=dataloaders,
+        baseline_params = {
+            "baseline_epochs": baseline_result.epochs,
+            "baseline_best_epoch": baseline_result.best_epoch,
+            "baseline_lr": baseline_lr,
+            "baseline_weight_decay": baseline_weight_decay,
+            "baseline_batch_size": train_batch_size,
+        }
+        run = mlflow.active_run()
+        if run is None:
+            raise RuntimeError("Expected an active MLflow run at this point.")
+        existing_params = mlflow.get_run(run.info.run_id).data.params
+        params_to_log = {
+            key: value
+            for key, value in baseline_params.items()
+            if str(value) != existing_params.get(key)
+        }
+        if params_to_log:
+            mlflow.log_params(params_to_log)
+
+        metric_step = (
+            baseline_result.best_epoch
+            if baseline_result.best_epoch != -1
+            else baseline_result.epochs
+        )
+        mlflow.log_metric(
+            "baseline_val_loss",
+            baseline_result.val_loss,
+            step=metric_step,
+        )
+        mlflow.log_metric(
+            "baseline_val_accuracy",
+            baseline_result.val_metrics.accuracy,
+            step=metric_step,
+        )
+        mlflow.log_metric(
+            "baseline_val_macro_precision",
+            baseline_result.val_metrics.macro_precision,
+            step=metric_step,
+        )
+        mlflow.log_metric(
+            "baseline_val_macro_recall",
+            baseline_result.val_metrics.macro_recall,
+            step=metric_step,
+        )
+        mlflow.log_metric(
+            "baseline_val_macro_f1",
+            baseline_result.val_metrics.macro_f1,
+            step=metric_step,
+        )
+        mlflow.log_metric(
+            "baseline_test_loss",
+            baseline_result.test_loss,
+            step=baseline_result.epochs,
+        )
+        mlflow.log_metric(
+            "baseline_test_accuracy",
+            baseline_result.test_metrics.accuracy,
+            step=baseline_result.epochs,
+        )
+        mlflow.log_metric(
+            "baseline_test_macro_precision",
+            baseline_result.test_metrics.macro_precision,
+            step=baseline_result.epochs,
+        )
+        mlflow.log_metric(
+            "baseline_test_macro_recall",
+            baseline_result.test_metrics.macro_recall,
+            step=baseline_result.epochs,
+        )
+        mlflow.log_metric(
+            "baseline_test_macro_f1",
+            baseline_result.test_metrics.macro_f1,
+            step=baseline_result.epochs,
+        )
+        mlflow.log_param("full_training", cfg.training.full_training)
+
+        predictions_dir = Path("outputs/predictions")
+        predictions_dir.mkdir(parents=True, exist_ok=True)
+        for existing_file in predictions_dir.glob("*.npy"):
+            existing_file.unlink()
+
+        final_model: nn.Module
+        final_model_path: Path
+        final_val_metrics: ClassificationMetrics
+        final_test_metrics: ClassificationMetrics
+        val_outputs: Optional[Dict[str, np.ndarray]] = None
+        test_outputs: Optional[Dict[str, np.ndarray]] = None
+        final_model_variant = f"baseline_{cfg.training.baseline}"
+
+        if cfg.training.full_training:
+            mlflow_pytorch.autolog(log_models=False)
+            model = _build_model(cfg, hyperparams).to(device)
+            optimizer = _build_optimizer(model, cfg, hyperparams)
+            scheduler = _build_scheduler(optimizer, cfg, dataloaders["train"])
+            criterion_train = nn.CrossEntropyLoss(weight=class_weights_device)
+            criterion_eval = nn.CrossEntropyLoss()
+            scaler = torch.amp.GradScaler(
+                device=device.type,
+                enabled=cfg.training.amp and device.type == "cuda",
+            )
+
+            best_val_acc = float("-inf")
+            patience_counter = 0
+            epochs = cfg.training.epochs
+
+            for epoch in range(1, epochs + 1):
+                LOGGER.info("Epoch %d/%d", epoch, epochs)
+                train_loss, train_metrics = train_one_epoch(
+                    model=model,
+                    dataloader=dataloaders["train"],
+                    criterion=criterion_train,
+                    optimizer=optimizer,
                     device=device,
-                    num_classes=len(bundle.label_names),
-                    epochs=min(cfg.training.epochs, 5),
-                    lr=baseline_lr,
-                    weight_decay=baseline_weight_decay,
-                    scheduler_cfg=cfg.training.scheduler,
-                    output_dir=Path("outputs/baseline"),
-                    class_weights=class_weights,
-                    mlflow_logging=False,
-                    mlflow_prefix="baseline_resnet18",
+                    scaler=scaler,
+                    clip_norm=cfg.training.gradient_clip_norm,
+                    scheduler=scheduler,
                 )
-            elif cfg.training.baseline == "resnet50":
-                baseline_result = run_resnet50_baseline(
-                    dataloaders=dataloaders,
-                    device=device,
-                    num_classes=len(bundle.label_names),
-                    epochs=min(cfg.training.epochs, 5),
-                    lr=baseline_lr,
-                    weight_decay=baseline_weight_decay,
-                    scheduler_cfg=cfg.training.scheduler,
-                    output_dir=Path("outputs/baseline"),
-                    class_weights=class_weights,
-                    mlflow_logging=False,
-                    mlflow_prefix="baseline_resnet50",
-                )
-            else:
-                raise ValueError(f"Unsupported baseline: {cfg.training.baseline}")
-
-            # mlflow.log_params(
-            #     {
-            #         "baseline_epochs": baseline_result.epochs,
-            #         "baseline_best_epoch": baseline_result.best_epoch,
-            #         "baseline_lr": baseline_lr,
-            #         "baseline_weight_decay": baseline_weight_decay,
-            #         "baseline_batch_size": batch_size,
-            #     }
-            # )
-            # metric_step = (
-            #     baseline_result.best_epoch
-            #     if baseline_result.best_epoch != -1
-            #     else baseline_result.epochs
-            # )
-            # mlflow.log_metric(
-            #     "baseline_val_loss",
-            #     baseline_result.val_loss,
-            #     step=metric_step,
-            # )
-            # mlflow.log_metric(
-            #     "baseline_val_accuracy",
-            #     baseline_result.val_metrics.accuracy,
-            #     step=metric_step,
-            # )
-            # mlflow.log_metric(
-            #     "baseline_val_macro_precision",
-            #     baseline_result.val_metrics.macro_precision,
-            #     step=metric_step,
-            # )
-            # mlflow.log_metric(
-            #     "baseline_val_macro_recall",
-            #     baseline_result.val_metrics.macro_recall,
-            #     step=metric_step,
-            # )
-            # mlflow.log_metric(
-            #     "baseline_val_macro_f1",
-            #     baseline_result.val_metrics.macro_f1,
-            #     step=metric_step,
-            # )
-            # mlflow.log_metric(
-            #     "baseline_test_loss",
-            #     baseline_result.test_loss,
-            #     step=baseline_result.epochs,
-            # )
-            # mlflow.log_metric(
-            #     "baseline_test_accuracy",
-            #     baseline_result.test_metrics.accuracy,
-            #     step=baseline_result.epochs,
-            # )
-            # mlflow.log_metric(
-            #     "baseline_test_macro_precision",
-            #     baseline_result.test_metrics.macro_precision,
-            #     step=baseline_result.epochs,
-            # )
-            # mlflow.log_metric(
-            #     "baseline_test_macro_recall",
-            #     baseline_result.test_metrics.macro_recall,
-            #     step=baseline_result.epochs,
-            # )
-            # mlflow.log_metric(
-            #     "baseline_test_macro_f1",
-            #     baseline_result.test_metrics.macro_f1,
-            #     step=baseline_result.epochs,
-            # )
-            # mlflow.log_param("full_training", cfg.training.full_training)
-
-            predictions_dir = Path("outputs/predictions")
-            predictions_dir.mkdir(parents=True, exist_ok=True)
-            for existing_file in predictions_dir.glob("*.npy"):
-                existing_file.unlink()
-
-            final_model: nn.Module
-            final_model_path: Path
-            final_val_metrics: ClassificationMetrics
-            final_test_metrics: ClassificationMetrics
-            val_outputs: Optional[Dict[str, np.ndarray]] = None
-            test_outputs: Optional[Dict[str, np.ndarray]] = None
-            final_model_variant = f"baseline_{cfg.training.baseline}"
-
-            if cfg.training.full_training:
-                mlflow_pytorch.autolog(log_models=False)
-                model = _build_model(cfg, hyperparams).to(device)
-                optimizer = _build_optimizer(model, cfg, hyperparams)
-                scheduler = _build_scheduler(optimizer, cfg, dataloaders["train"])
-                criterion_train = nn.CrossEntropyLoss(weight=class_weights_device)
-                criterion_eval = nn.CrossEntropyLoss()
-                scaler = torch.amp.GradScaler(
-                    device=device.type,
-                    enabled=cfg.training.amp and device.type == "cuda",
-                )
-
-                best_val_acc = float("-inf")
-                patience_counter = 0
-                epochs = cfg.training.epochs
-
-                for epoch in range(1, epochs + 1):
-                    LOGGER.info("Epoch %d/%d", epoch, epochs)
-                    train_loss, train_metrics = train_one_epoch(
-                        model=model,
-                        dataloader=dataloaders["train"],
-                        criterion=criterion_train,
-                        optimizer=optimizer,
-                        device=device,
-                        scaler=scaler,
-                        clip_norm=cfg.training.gradient_clip_norm,
-                        scheduler=scheduler,
-                    )
-                    val_loss, val_metrics, _ = evaluate(
-                        model=model,
-                        dataloader=dataloaders["validation"],
-                        criterion=criterion_eval,
-                        device=device,
-                    )
-
-                    # log_epoch_metrics("train", train_loss, train_metrics, epoch)
-                    # log_epoch_metrics("val", val_loss, val_metrics, epoch)
-
-                    if val_metrics.accuracy > best_val_acc:
-                        best_val_acc = val_metrics.accuracy
-                        patience_counter = 0
-                        torch.save(model.state_dict(), "outputs/best_model.pt")
-                    else:
-                        patience_counter += 1
-                        if patience_counter >= cfg.training.early_stopping_patience:
-                            LOGGER.info("Early stopping triggered at epoch %d", epoch)
-                            break
-
-                checkpoint_path = Path("outputs/best_model.pt")
-                if not checkpoint_path.exists():
-                    torch.save(model.state_dict(), checkpoint_path)
-
-                model.load_state_dict(
-                    torch.load(
-                        checkpoint_path,
-                        map_location=device,
-                    )
-                )
-
-                val_loss, final_val_metrics, val_outputs = evaluate(
+                val_loss, val_metrics, _ = evaluate(
                     model=model,
                     dataloader=dataloaders["validation"],
                     criterion=criterion_eval,
                     device=device,
                 )
-                _, final_test_metrics, test_outputs = evaluate(
-                    model=model,
-                    dataloader=dataloaders["test"],
-                    criterion=criterion_eval,
-                    device=device,
+
+                mlflow.log_metrics(
+                    {
+                        "train_loss": train_loss,
+                        "train_accuracy": train_metrics.accuracy,
+                        "val_loss": val_loss,
+                        "val_accuracy": val_metrics.accuracy,
+                        "val_macro_precision": val_metrics.macro_precision,
+                        "val_macro_recall": val_metrics.macro_recall,
+                        "val_macro_f1": val_metrics.macro_f1,
+                    },
+                    step=epoch,
                 )
 
-                final_model = model
-                final_model_path = checkpoint_path
-                final_model_variant = "cnn"
-            else:
-                baseline_state = torch.load(
-                    baseline_result.model_path,
-                    map_location="cpu",
+                if val_metrics.accuracy > best_val_acc:
+                    best_val_acc = val_metrics.accuracy
+                    patience_counter = 0
+                    torch.save(model.state_dict(), "outputs/best_model.pt")
+                else:
+                    patience_counter += 1
+                    if patience_counter >= cfg.training.early_stopping_patience:
+                        LOGGER.info("Early stopping triggered at epoch %d", epoch)
+                        break
+
+            checkpoint_path = Path("outputs/best_model.pt")
+            if not checkpoint_path.exists():
+                torch.save(model.state_dict(), checkpoint_path)
+
+            model.load_state_dict(
+                torch.load(
+                    checkpoint_path,
+                    map_location=device,
                 )
-                final_model = _build_baseline_model_for_logging(
-                    cfg.training.baseline,
-                    len(bundle.label_names),
-                )
-                final_model.load_state_dict(baseline_state)
-                final_model_path = Path("outputs/best_model.pt")
-                torch.save(final_model.state_dict(), final_model_path)
-                final_val_metrics = baseline_result.val_metrics
-                final_test_metrics = baseline_result.test_metrics
-
-                for filename in [
-                    "val_y_true.npy",
-                    "val_y_scores.npy",
-                    "val_y_pred.npy",
-                    "test_y_true.npy",
-                    "test_y_scores.npy",
-                    "test_y_pred.npy",
-                ]:
-                    source_file = baseline_result.predictions_dir / filename
-                    if source_file.exists():
-                        shutil.copy2(source_file, predictions_dir / filename)
-
-            if val_outputs is not None and test_outputs is not None:
-                np.save(predictions_dir / "val_y_true.npy", val_outputs["y_true"])
-                np.save(predictions_dir / "val_y_scores.npy", val_outputs["y_scores"])
-                np.save(predictions_dir / "val_y_pred.npy", val_outputs["y_pred"])
-                np.save(predictions_dir / "test_y_true.npy", test_outputs["y_true"])
-                np.save(
-                    predictions_dir / "test_y_scores.npy",
-                    test_outputs["y_scores"],
-                )
-                np.save(predictions_dir / "test_y_pred.npy", test_outputs["y_pred"])
-
-            # mlflow.log_param("model_variant", final_model_variant)
-            # mlflow.set_tag("model_variant", final_model_variant)
-
-            # Log final validation and test metrics
-            LOGGER.info("Logging final validation and test metrics")
-            # mlflow.log_metric(
-            #     "final_val_accuracy",
-            #     final_val_metrics.accuracy,
-            # )
-            # mlflow.log_metric(
-            #     "final_val_macro_precision",
-            #     final_val_metrics.macro_precision,
-            # )
-            # mlflow.log_metric(
-            #     "final_val_macro_recall",
-            #     final_val_metrics.macro_recall,
-            # )
-            # mlflow.log_metric(
-            #     "final_val_macro_f1",
-            #     final_val_metrics.macro_f1,
-            # )
-            # mlflow.log_metric(
-            #     "final_test_accuracy",
-            #     final_test_metrics.accuracy,
-            # )
-            # mlflow.log_metric(
-            #     "final_test_macro_precision",
-            #     final_test_metrics.macro_precision,
-            # )
-            # mlflow.log_metric(
-            #     "final_test_macro_recall",
-            #     final_test_metrics.macro_recall,
-            # )
-            # mlflow.log_metric(
-            #     "final_test_macro_f1",
-            #     final_test_metrics.macro_f1,
-            # )
-
-            # Log final model and artifacts
-            LOGGER.info("Logging final model and artifacts")
-            # mlflow.log_artifact(str(final_model_path), artifact_path="model")
-            # mlflow_pytorch.log_model(
-            #     final_model.to("cpu"), artifact_path="model_artifact"
-            # )
-
-            # LOGGER.info("Logging predictions")
-            # mlflow.log_artifacts(str(predictions_dir), artifact_path="predictions")
-
-            LOGGER.info("Logging metadata for final model")
-            metadata = {
-                "label_names": bundle.label_names,
-                "label_ids": list(bundle.label_ids),
-                "validation_metrics": asdict(final_val_metrics),
-                "test_metrics": asdict(final_test_metrics),
-                "best_params": hyperparams,
-                "class_weights": class_weights.tolist(),
-                "model_variant": final_model_variant,
-                "full_training": cfg.training.full_training,
-                "baseline": {
-                    "name": cfg.training.baseline,
-                    "val_loss": baseline_result.val_loss,
-                    "test_loss": baseline_result.test_loss,
-                    "val_metrics": asdict(baseline_result.val_metrics),
-                    "test_metrics": asdict(baseline_result.test_metrics),
-                    "best_epoch": baseline_result.best_epoch,
-                    "epochs": baseline_result.epochs,
-                    "lr": baseline_lr,
-                    "weight_decay": baseline_weight_decay,
-                },
-            }
-
-            metadata_path = Path("outputs/metadata.json")
-            metadata_path.write_text(
-                json.dumps(metadata, indent=2),
-                encoding="utf-8",
             )
-            # mlflow.log_artifact(str(metadata_path), artifact_path="metadata")
-            # mlflow.log_dict(hyperparams, "hyperparams/best_params.json")
 
-            run_id = run.info.run_id
+            val_loss, final_val_metrics, val_outputs = evaluate(
+                model=model,
+                dataloader=dataloaders["validation"],
+                criterion=criterion_eval,
+                device=device,
+            )
+            _, final_test_metrics, test_outputs = evaluate(
+                model=model,
+                dataloader=dataloaders["test"],
+                criterion=criterion_eval,
+                device=device,
+            )
+
+            final_model = model
+            final_model_path = checkpoint_path
+            final_model_variant = "cnn"
+        else:
+            baseline_state = torch.load(
+                baseline_result.model_path,
+                map_location="cpu",
+            )
+            final_model = _build_baseline_model_for_logging(
+                cfg.training.baseline,
+                len(bundle.label_names),
+            )
+            final_model.load_state_dict(baseline_state)
+            final_model_path = Path("outputs/best_model.pt")
+            torch.save(final_model.state_dict(), final_model_path)
+            final_val_metrics = baseline_result.val_metrics
+            final_test_metrics = baseline_result.test_metrics
+
+            for filename in [
+                "val_y_true.npy",
+                "val_y_scores.npy",
+                "val_y_pred.npy",
+                "test_y_true.npy",
+                "test_y_scores.npy",
+                "test_y_pred.npy",
+            ]:
+                source_file = baseline_result.predictions_dir / filename
+                if source_file.exists():
+                    shutil.copy2(source_file, predictions_dir / filename)
+
+        if val_outputs is not None and test_outputs is not None:
+            np.save(predictions_dir / "val_y_true.npy", val_outputs["y_true"])
+            np.save(predictions_dir / "val_y_scores.npy", val_outputs["y_scores"])
+            np.save(predictions_dir / "val_y_pred.npy", val_outputs["y_pred"])
+            np.save(predictions_dir / "test_y_true.npy", test_outputs["y_true"])
+            np.save(
+                predictions_dir / "test_y_scores.npy",
+                test_outputs["y_scores"],
+            )
+            np.save(predictions_dir / "test_y_pred.npy", test_outputs["y_pred"])
+
+        mlflow.log_param("model_variant", final_model_variant)
+        mlflow.set_tag("model_variant", final_model_variant)
+
+        LOGGER.info("Logging final validation and test metrics")
+        mlflow.log_metrics(
+            {
+                "final_val_accuracy": final_val_metrics.accuracy,
+                "final_val_macro_precision": final_val_metrics.macro_precision,
+                "final_val_macro_recall": final_val_metrics.macro_recall,
+                "final_val_macro_f1": final_val_metrics.macro_f1,
+                "final_test_accuracy": final_test_metrics.accuracy,
+                "final_test_macro_precision": final_test_metrics.macro_precision,
+                "final_test_macro_recall": final_test_metrics.macro_recall,
+                "final_test_macro_f1": final_test_metrics.macro_f1,
+            }
+        )
+
+        LOGGER.info("Logging final model and artifacts")
+        mlflow.log_artifact(str(final_model_path), artifact_path="model")
+        mlflow_pytorch.log_model(final_model.to("cpu"), artifact_path="model_artifact")
+        mlflow.log_artifacts(str(predictions_dir), artifact_path="predictions")
+
+        LOGGER.info("Logging metadata for final model")
+        metadata = {
+            "label_names": bundle.label_names,
+            "label_ids": list(bundle.label_ids),
+            "validation_metrics": asdict(final_val_metrics),
+            "test_metrics": asdict(final_test_metrics),
+            "best_params": hyperparams,
+            "class_weights": class_weights.tolist(),
+            "model_variant": final_model_variant,
+            "full_training": cfg.training.full_training,
+            "baseline": {
+                "name": cfg.training.baseline,
+                "val_loss": baseline_result.val_loss,
+                "test_loss": baseline_result.test_loss,
+                "val_metrics": asdict(baseline_result.val_metrics),
+                "test_metrics": asdict(baseline_result.test_metrics),
+                "best_epoch": baseline_result.best_epoch,
+                "epochs": baseline_result.epochs,
+                "lr": baseline_lr,
+                "weight_decay": baseline_weight_decay,
+            },
+        }
+
+        metadata_path = Path("outputs/metadata.json")
+        metadata_path.write_text(
+            json.dumps(metadata, indent=2),
+            encoding="utf-8",
+        )
+        mlflow.log_artifact(str(metadata_path), artifact_path="metadata")
+        mlflow.log_dict(hyperparams, "hyperparams/best_params.json")
+
+        run_id = run.info.run_id
 
         result = TrainingResult(
             run_id=run_id,

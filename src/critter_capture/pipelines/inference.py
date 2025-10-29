@@ -78,12 +78,19 @@ class InferencePipeline(PipelineBase):
         metrics = compute_classification_metrics(y_true, y_pred, bundle.label_names)
 
         experiment_name = cfg.inference.experiment_name
-        mlflow.set_experiment(experiment_name)
-        run = mlflow.start_run(
-            run_name="inference",
-            tags={"pipeline": "inference", "environment": cfg.environment},
-        )
-        with run:
+        tags = {"pipeline": "inference", "environment": cfg.environment}
+        run = mlflow.active_run()
+        run_started_here = False
+        if run is None:
+            mlflow.set_experiment(experiment_name)
+            run = mlflow.start_run(run_name="inference", tags=tags)
+            run_started_here = True
+        else:
+            mlflow.set_tags(tags)
+
+        preds_path: Path
+        run_id = run.info.run_id
+        try:
             mlflow.log_metric("inference_accuracy", metrics.accuracy)
             mlflow.log_metric("inference_macro_precision", metrics.macro_precision)
             mlflow.log_metric("inference_macro_recall", metrics.macro_recall)
@@ -104,13 +111,20 @@ class InferencePipeline(PipelineBase):
             mlflow.log_artifact(str(preds_path), artifact_path="predictions")
 
             client = MlflowClient()
-            client.set_tag(run.info.run_id, "service_url", service_url)
+            client.set_tag(run_id, "service_url", service_url)
+        except Exception:
+            if run_started_here and mlflow.active_run():
+                mlflow.end_run(status="FAILED")
+            raise
+        else:
+            if run_started_here and mlflow.active_run():
+                mlflow.end_run()
 
         return InferenceResult(
             metrics=metrics,
             predictions_path=preds_path,
             service_url=service_url,
-            run_id=run.info.run_id,
+            run_id=run_id,
         )
 
     async def _run_inference(

@@ -152,7 +152,7 @@ class SchedulerConfig(BaseModel):
         description="Scheduler name or None.",
     )
     max_lr: Optional[float] = Field(
-        None,
+        1e-3,
         gt=0,
         description="Maximum learning rate used by schedulers such as OneCycleLR.",
     )

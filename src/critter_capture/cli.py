@@ -10,6 +10,11 @@ from critter_capture.pipelines import (
     run_inference_pipeline,
     run_training_pipeline,
 )
+from critter_capture.zenml import (
+    run_deployment_pipeline_with_zenml,
+    run_inference_pipeline_with_zenml,
+    run_training_pipeline_with_zenml,
+)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -39,6 +44,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Run ID to load training result from.",
     )
+    parser.add_argument(
+        "--use-zenml",
+        action="store_true",
+        help="Execute the pipeline through the ZenML orchestrator.",
+    )
     return parser
 
 
@@ -46,12 +56,23 @@ def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
+    config_path = Path(args.config)
+
     if args.pipeline == "train":
-        run_training_pipeline(args.config, args.env)
+        if args.use_zenml:
+            run_training_pipeline_with_zenml(config_path, args.env)
+        else:
+            run_training_pipeline(config_path, args.env)
     elif args.pipeline == "deploy":
-        run_deployment_pipeline(args.config, args.env, args.run_id)
+        if args.use_zenml:
+            run_deployment_pipeline_with_zenml(config_path, args.env, args.run_id)
+        else:
+            run_deployment_pipeline(config_path, args.env, args.run_id)
     elif args.pipeline == "inference":
-        run_inference_pipeline(args.config, args.env)
+        if args.use_zenml:
+            run_inference_pipeline_with_zenml(config_path, args.env)
+        else:
+            run_inference_pipeline(config_path, args.env)
     else:
         raise ValueError(f"Unknown pipeline {args.pipeline}")
 

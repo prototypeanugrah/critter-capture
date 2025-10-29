@@ -20,7 +20,6 @@ from PIL import Image
 from requests import RequestException
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset as TorchDataset
-from zenml.steps import step
 
 from critter_capture.config import DataConfig
 from critter_capture.data.splits import stratified_train_val_test_split
@@ -270,19 +269,21 @@ def _load_records(
     LOGGER.info(
         f"Number of missing values in {cfg.image_url_column}: {df[cfg.image_url_column].isna().sum()}"
     )
-    # Remove rows with missing values in image_url
     df = df[df[cfg.image_url_column].notna()]
     LOGGER.info(
-        f"Shape of the dataset after removing missing values in {cfg.image_url_column}: {df.shape}"
+        "Shape of the dataset after removing entries without image URLs: %s",
+        df.shape,
     )
 
     df = df.drop_duplicates(subset=[cfg.image_url_column], keep="first")
     LOGGER.info(
-        f"Shape of the dataset after removing duplicates in {cfg.image_url_column}: {df.shape}"
+        "Shape of the dataset after removing duplicate image URLs: %s",
+        df.shape,
     )
 
     # get the common_name which have only 1 count
     vc = df[cfg.label_names_column].value_counts()
+
     less_count_df = df[
         df[cfg.label_names_column].map(vc) < cfg.keep_min_samples_per_label
     ]
@@ -348,7 +349,6 @@ def _load_records(
     return records, label_names, label_ids_sorted
 
 
-@step
 def prepare_datasets(cfg: DataConfig, seed: int) -> DatasetBundle:
     records, label_names, label_ids = _load_records(cfg)
     num_classes = len(label_names)

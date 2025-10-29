@@ -670,7 +670,14 @@ class TrainingPipeline(PipelineBase):
 
         LOGGER.info("Logging final model and artifacts")
         mlflow.log_artifact(str(final_model_path), artifact_path="model")
-        mlflow_pytorch.log_model(final_model.to("cpu"), artifact_path="model_artifact")
+
+        batch = next(iter(dataloaders["train"]))
+        example = batch["image"].to("cpu")  # Shape: (batch_size, 3, 224, 224)
+        mlflow_pytorch.log_model(
+            pytorch_model=final_model.to("cpu"),
+            artifact_path="model_artifact",
+            input_example=example,
+        )
         mlflow.log_artifacts(str(predictions_dir), artifact_path="predictions")
 
         LOGGER.info("Logging metadata for final model")

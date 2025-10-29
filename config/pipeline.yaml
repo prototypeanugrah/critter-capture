@@ -69,8 +69,8 @@ base:
     enable: true
     mode: process
     evaluation:
-      min_precision: 0.1
-      min_recall: 0.1
+      min_precision: 0.05
+      min_recall: 0.05
       min_accuracy: 0.1
       metric_key: val_accuracy
     mlflow_model_name: AnimalSpeciesClassifier

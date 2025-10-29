@@ -248,6 +248,7 @@ class EvaluationCriteria(BaseModel):
 
     min_precision: float = Field(0.7, ge=0, le=1)
     min_recall: float = Field(0.7, ge=0, le=1)
+    min_accuracy: float = Field(0.7, ge=0, le=1)
     metric_key: str = Field("val_macro_f1")
 
 

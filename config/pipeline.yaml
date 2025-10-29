@@ -7,6 +7,7 @@ base:
     image_url_fallback_column: url
     label_column: taxon_id
     label_names_column: common_name
+    keep_min_samples_per_label: 10
     validation_size: 0.15
     test_size: 0.15
     num_workers: 4
@@ -28,6 +29,7 @@ base:
     use_batch_norm: true
     use_spectral_norm: false
   training:
+    experiment_name: animal_species_multiclass
     full_training: false
     epochs: 50
     batch_size: 512

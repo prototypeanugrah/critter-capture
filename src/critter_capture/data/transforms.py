@@ -22,8 +22,8 @@ def build_transforms(
             [
                 T.Resize((image_size, image_size)),
                 T.RandomHorizontalFlip(p=0.5),
-                T.RandomVerticalFlip(p=0.2),
-                T.ColorJitter(0.1, 0.1, 0.1, 0.05),
+                # T.RandomVerticalFlip(p=0.2),
+                # T.ColorJitter(0.1, 0.1, 0.1, 0.05),
                 T.ToTensor(),
                 normalize,
             ]

@@ -32,6 +32,7 @@ dependencies = [
     "nvitop>=1.5.3",
     "deepchecks[vision]>=0.18.0",
     "setuptools>=67,<81",
+    "zenml>=0.91.0",
 ]
 
 

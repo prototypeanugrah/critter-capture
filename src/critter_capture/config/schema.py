@@ -39,6 +39,9 @@ class DataConfig(BaseModel):
         "common_name",
         description="Column containing human-readable label names.",
     )
+    keep_min_samples_per_label: int = Field(
+        10, ge=1, description="Minimum number of samples per label to keep."
+    )
     validation_size: float = Field(
         0.15,
         ge=0.05,
@@ -167,6 +170,10 @@ class SchedulerConfig(BaseModel):
 class TrainingConfig(BaseModel):
     """Training loop settings."""
 
+    experiment_name: str = Field(
+        "animal_species_multiclass",
+        description="Name of the experiment.",
+    )
     full_training: bool = Field(
         True,
         description="Whether to train the model for the full number of epochs.",

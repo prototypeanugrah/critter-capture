@@ -20,6 +20,7 @@ from PIL import Image
 from requests import RequestException
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset as TorchDataset
+from zenml import Output, step
 
 from critter_capture.config import DataConfig
 from critter_capture.data.splits import stratified_train_val_test_split
@@ -266,12 +267,39 @@ def _load_records(
     if missing:
         raise ValueError(f"Missing required columns in CSV: {missing}")
 
-    essential_columns = {
-        cfg.uuid_column,
-        cfg.label_column,
-        cfg.label_names_column,
-    }
-    df = df.dropna(subset=list(essential_columns))
+    LOGGER.info(
+        f"Number of missing values in {cfg.image_url_column}: {df[cfg.image_url_column].isna().sum()}"
+    )
+    # Remove rows with missing values in image_url
+    df = df[df[cfg.image_url_column].notna()]
+    LOGGER.info(
+        f"Shape of the dataset after removing missing values in {cfg.image_url_column}: {df.shape}"
+    )
+
+    df = df.drop_duplicates(subset=[cfg.image_url_column], keep="first")
+    LOGGER.info(
+        f"Shape of the dataset after removing duplicates in {cfg.image_url_column}: {df.shape}"
+    )
+
+    # get the common_name which have only 1 count
+    vc = df[cfg.label_names_column].value_counts()
+    less_count_df = df[
+        df[cfg.label_names_column].map(vc) < cfg.keep_min_samples_per_label
+    ]
+    LOGGER.info(
+        f"Shape of the dataset containing {cfg.label_names_column} with less than {cfg.keep_min_samples_per_label} counts: {less_count_df.shape}"
+    )
+    LOGGER.info(
+        f"Number of unique {cfg.label_names_column} with less than {cfg.keep_min_samples_per_label} counts: {less_count_df[cfg.label_names_column].nunique()}"
+    )
+
+    df = df[df[cfg.label_names_column].map(vc) >= cfg.keep_min_samples_per_label]
+    LOGGER.info(
+        f"Shape of the dataset containing {cfg.label_names_column} with at least {cfg.keep_min_samples_per_label} counts: {df.shape}"
+    )
+    LOGGER.info(
+        f"Number of unique {cfg.label_names_column} with at least {cfg.keep_min_samples_per_label} counts: {df[cfg.label_names_column].nunique()}"
+    )
 
     if cfg.sample_limit:
         df = df.head(cfg.sample_limit)
@@ -320,7 +348,8 @@ def _load_records(
     return records, label_names, label_ids_sorted
 
 
-def prepare_datasets(cfg: DataConfig, seed: int) -> DatasetBundle:
+@step
+def prepare_datasets(cfg: DataConfig, seed: int) -> Output(bundle=DatasetBundle):
     records, label_names, label_ids = _load_records(cfg)
     num_classes = len(label_names)
     if num_classes == 0:
@@ -365,26 +394,36 @@ def prepare_datasets(cfg: DataConfig, seed: int) -> DatasetBundle:
         cfg.image_cache_dir,
     )
 
-    return DatasetBundle(
+    bundle = DatasetBundle(
         train=torch_train,
         validation=torch_val,
         test=torch_test,
         label_names=label_names,
         label_ids=label_ids,
     )
+    return bundle
 
 
 def compute_class_weights(dataset: ObservationsDataset) -> torch.Tensor:
-    """Compute inverse-frequency class weights for imbalanced classification."""
+    """
+    Compute median-frequency balancing class weights for imbalanced classification.
 
-    counts = torch.zeros(dataset._num_classes, dtype=torch.float32)
-    for record in dataset._records:
-        counts[record.label_index] += 1.0
+    Args:
+        dataset (ObservationsDataset): The dataset to compute class weights for.
 
+    Returns:
+        torch.Tensor: The class weights for each class. Data type is torch.float32.
+    """
+    counts = torch.bincount(
+        torch.tensor(
+            [record.label_index for record in dataset._records],
+            dtype=torch.int32,
+        ),
+        minlength=dataset._num_classes,
+    )
     counts = torch.clamp(counts, min=1.0)
-    weights = counts.sum() / (counts * counts.numel())
-    weights = weights / weights.mean()
-    return weights
+    median_frequency = torch.median(counts)
+    return median_frequency / counts
 
 
 def build_dataloaders(

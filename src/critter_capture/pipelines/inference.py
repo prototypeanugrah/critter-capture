@@ -77,7 +77,7 @@ class InferencePipeline(PipelineBase):
 
         metrics = compute_classification_metrics(y_true, y_pred, bundle.label_names)
 
-        experiment_name = "animal_species_multiclass"
+        experiment_name = cfg.inference.experiment_name
         mlflow.set_experiment(experiment_name)
         run = mlflow.start_run(
             run_name="inference",

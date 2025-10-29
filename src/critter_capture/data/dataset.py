@@ -20,7 +20,7 @@ from PIL import Image
 from requests import RequestException
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset as TorchDataset
-from zenml import Output, step
+from zenml.steps import step
 
 from critter_capture.config import DataConfig
 from critter_capture.data.splits import stratified_train_val_test_split
@@ -349,7 +349,7 @@ def _load_records(
 
 
 @step
-def prepare_datasets(cfg: DataConfig, seed: int) -> Output(bundle=DatasetBundle):
+def prepare_datasets(cfg: DataConfig, seed: int) -> DatasetBundle:
     records, label_names, label_ids = _load_records(cfg)
     num_classes = len(label_names)
     if num_classes == 0:

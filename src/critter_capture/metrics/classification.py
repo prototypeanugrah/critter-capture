@@ -7,7 +7,7 @@ from typing import Dict, Sequence
 
 import numpy as np
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support
-from zenml import Output, step
+from zenml.steps import step
 
 
 @dataclass
@@ -24,7 +24,7 @@ def compute_classification_metrics(
     y_true: np.ndarray,
     y_pred: np.ndarray,
     label_names: Sequence[str],
-) -> Output(metrics=ClassificationMetrics):
+) -> ClassificationMetrics:
     (
         macro_precision,
         macro_recall,

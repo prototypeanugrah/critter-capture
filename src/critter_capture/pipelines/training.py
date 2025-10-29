@@ -19,7 +19,7 @@ from ray.air import session
 from torch.optim.lr_scheduler import OneCycleLR
 from torch.utils.data import DataLoader
 from torchvision.models import resnet18, resnet50
-from zenml import Output, step
+from zenml.steps import step
 
 from critter_capture.baselines import run_resnet18_baseline, run_resnet50_baseline
 from critter_capture.config import PipelineConfig
@@ -308,7 +308,7 @@ class TrainingPipeline(PipelineBase):
     @step(experiment_tracker="mlflow_tracker")
     def _train_final(
         self, bundle: DatasetBundle, hyperparams: Dict[str, Any]
-    ) -> Output(result=TrainingResult):
+    ) -> TrainingResult:
         """Train the final model.
 
         Args:

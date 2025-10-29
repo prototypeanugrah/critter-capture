@@ -19,11 +19,6 @@ from critter_capture.pipelines.training import TrainingPipeline, TrainingResult
 from critter_capture.services import (
     configure_mlflow,
     register_model,
-    save_process_metadata,
-    start_mlflow_server,
-    stop_existing_process,
-    update_model_stage,
-    wait_for_healthcheck,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -43,6 +38,7 @@ class DeploymentResult:
     decision: DeploymentDecision
     service_url: Optional[str]
     metadata_path: Optional[Path]
+    model_version: Optional[str]
 
 
 def _resolve_checkpoint_path(download_path: Path) -> Path:
@@ -144,7 +140,7 @@ class DeploymentPipeline(PipelineBase):
         metadata_path = None
 
         if decision.approved and cfg.deployment.enable:
-            service_url, metadata_path = self._deploy(training_result, decision)
+            model_version = self._deploy(training_result, decision)
         else:
             LOGGER.info("Deployment skipped: %s", decision.reason)
 
@@ -153,6 +149,7 @@ class DeploymentPipeline(PipelineBase):
             decision=decision,
             service_url=service_url,
             metadata_path=metadata_path,
+            model_version=model_version,
         )
 
     def _evaluate(self, training_result: TrainingResult) -> DeploymentDecision:
@@ -228,100 +225,104 @@ class DeploymentPipeline(PipelineBase):
 
     def _deploy(
         self, training_result: TrainingResult, decision: DeploymentDecision
-    ) -> tuple[str, Path]:
+    ) -> str:
         cfg = self.context.config
+        model_variant = training_result.model_variant
         run_model_uri = f"runs:/{training_result.run_id}/model_artifact"
-        version = register_model(
-            model_uri=run_model_uri,
-            model_name=cfg.deployment.mlflow_model_name,
-            run_id=training_result.run_id,
-            stage=None,
-        )
 
-        registry_model_uri = (
-            f"models:/{cfg.deployment.mlflow_model_name}/{version}"
-        )
-        deployment_stage = "Production"
-        update_model_stage(
-            cfg.deployment.mlflow_model_name,
-            version,
-            deployment_stage,
-        )
-
-        decision.model_uri = registry_model_uri
-        decision.model_version = str(version)
-
-        mode = cfg.deployment.mode
-        service_url = (
-            cfg.deployment.external_service_url
-            or f"http://{cfg.deployment.serving_host}:{cfg.deployment.serving_port}/invocations"
-        )
-        deployed_model_uri = (
-            f"models:/{cfg.deployment.mlflow_model_name}/{deployment_stage}"
-            if deployment_stage
-            else registry_model_uri
-        )
-
-        if mode == "external":
-            LOGGER.info(
-                "External deployment mode detected. Registered model version %s for serving endpoint %s.",
-                version,
-                service_url,
+        if decision.approved:
+            model_version = register_model(
+                model_uri=run_model_uri,
+                model_name=f"{cfg.deployment.mlflow_model_name}_{model_variant}",
             )
-            client = MlflowClient()
-            client.set_tag(training_result.run_id, "deployment_mode", mode)
-            client.set_tag(
-                training_result.run_id, "deployed_model_version", str(version)
-            )
-            client.set_tag(
-                training_result.run_id, "deployed_model_uri", deployed_model_uri
-            )
-            client.set_tag(training_result.run_id, "deployed_endpoint", service_url)
-            return service_url, None
+        return str(model_version)
 
-        metadata_path = Path("outputs/deployment/serving_process.json")
-        metadata_path.parent.mkdir(parents=True, exist_ok=True)
-        stop_existing_process(metadata_path)
+        # registry_model_uri = f"models:/{f"{cfg.deployment.mlflow_model_name}_{model_variant}"}/{version}"
+        # deployment_stage = "Production"
+        # update_model_stage(
+        #     cfg.deployment.mlflow_model_name,
+        #     version,
+        #     deployment_stage,
+        # )
 
-        server_env = dict(cfg.deployment.server_env or {})
-        server_env.setdefault("MLFLOW_TRACKING_URI", cfg.storage.mlflow_tracking_uri)
-        if cfg.storage.mlflow_registry_uri:
-            server_env.setdefault("MLFLOW_REGISTRY_URI", cfg.storage.mlflow_registry_uri)
-        else:
-            server_env.setdefault("MLFLOW_REGISTRY_URI", cfg.storage.mlflow_tracking_uri)
+        # decision.model_uri = registry_model_uri
+        # decision.model_version = str(version)
 
-        LOGGER.info(
-            "Starting local serving for model URI %s (alias %s)",
-            registry_model_uri,
-            deployed_model_uri,
-        )
+        # mode = cfg.deployment.mode
+        # service_url = (
+        #     cfg.deployment.external_service_url
+        #     or f"http://{cfg.deployment.serving_host}:{cfg.deployment.serving_port}/invocations"
+        # )
+        # deployed_model_uri = (
+        #     f"models:/{cfg.deployment.mlflow_model_name}/{deployment_stage}"
+        #     if deployment_stage
+        #     else registry_model_uri
+        # )
 
-        process = start_mlflow_server(
-            model_uri=deployed_model_uri,
-            host=cfg.deployment.serving_host,
-            port=cfg.deployment.serving_port,
-            env=server_env,
-        )
-        save_process_metadata(process, metadata_path)
+        # if mode == "external":
+        #     LOGGER.info(
+        #         "External deployment mode detected. Registered model version %s for serving endpoint %s.",
+        #         version,
+        #         service_url,
+        #     )
+        #     client = MlflowClient()
+        #     client.set_tag(training_result.run_id, "deployment_mode", mode)
+        #     client.set_tag(
+        #         training_result.run_id, "deployed_model_version", str(version)
+        #     )
+        #     client.set_tag(
+        #         training_result.run_id, "deployed_model_uri", deployed_model_uri
+        #     )
+        #     client.set_tag(training_result.run_id, "deployed_endpoint", service_url)
+        #     return service_url, None
 
-        health_url = (
-            f"http://{cfg.deployment.serving_host}:{cfg.deployment.serving_port}/ping"
-        )
-        if not wait_for_healthcheck(
-            health_url, timeout=cfg.deployment.healthcheck_timeout
-        ):
-            LOGGER.error("Deployment failed health check.")
-            raise RuntimeError("Deployment health check failed.")
+        # metadata_path = Path("outputs/deployment/serving_process.json")
+        # metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        # stop_existing_process(metadata_path)
 
-        LOGGER.info("Model deployed at %s", service_url)
+        # server_env = dict(cfg.deployment.server_env or {})
+        # server_env.setdefault("MLFLOW_TRACKING_URI", cfg.storage.mlflow_tracking_uri)
+        # if cfg.storage.mlflow_registry_uri:
+        #     server_env.setdefault(
+        #         "MLFLOW_REGISTRY_URI", cfg.storage.mlflow_registry_uri
+        #     )
+        # else:
+        #     server_env.setdefault(
+        #         "MLFLOW_REGISTRY_URI", cfg.storage.mlflow_tracking_uri
+        #     )
 
-        client = MlflowClient()
-        client.set_tag(training_result.run_id, "deployed_model_version", str(version))
-        client.set_tag(training_result.run_id, "deployed_model_uri", deployed_model_uri)
-        client.set_tag(training_result.run_id, "deployed_endpoint", service_url)
-        client.set_tag(training_result.run_id, "deployment_mode", mode)
+        # LOGGER.info(
+        #     "Starting local serving for model URI %s (alias %s)",
+        #     registry_model_uri,
+        #     deployed_model_uri,
+        # )
 
-        return service_url, metadata_path
+        # process = start_mlflow_server(
+        #     model_uri=deployed_model_uri,
+        #     host=cfg.deployment.serving_host,
+        #     port=cfg.deployment.serving_port,
+        #     env=server_env,
+        # )
+        # save_process_metadata(process, metadata_path)
+
+        # health_url = (
+        #     f"http://{cfg.deployment.serving_host}:{cfg.deployment.serving_port}/ping"
+        # )
+        # if not wait_for_healthcheck(
+        #     health_url, timeout=cfg.deployment.healthcheck_timeout
+        # ):
+        #     LOGGER.error("Deployment failed health check.")
+        #     raise RuntimeError("Deployment health check failed.")
+
+        # LOGGER.info("Model deployed at %s", service_url)
+
+        # client = MlflowClient()
+        # client.set_tag(training_result.run_id, "deployed_model_version", str(version))
+        # client.set_tag(training_result.run_id, "deployed_model_uri", deployed_model_uri)
+        # client.set_tag(training_result.run_id, "deployed_endpoint", service_url)
+        # client.set_tag(training_result.run_id, "deployment_mode", mode)
+
+        # return service_url, metadata_path
 
 
 def run_deployment_pipeline(

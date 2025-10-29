@@ -9,7 +9,6 @@ from critter_capture.pipelines import (
     run_deployment_pipeline,
     run_inference_pipeline,
     run_training_pipeline,
-    run_validation_pipeline,
 )
 
 
@@ -53,8 +52,6 @@ def main(argv: list[str] | None = None) -> None:
         run_deployment_pipeline(args.config, args.env, args.run_id)
     elif args.pipeline == "inference":
         run_inference_pipeline(args.config, args.env)
-    elif args.pipeline == "validate":
-        run_validation_pipeline(args.config, args.env)
     else:
         raise ValueError(f"Unknown pipeline {args.pipeline}")
 

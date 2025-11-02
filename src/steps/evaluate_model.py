@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+from typing import Tuple
 
 import mlflow
 import numpy as np
@@ -9,9 +10,7 @@ from torch.utils.data import DataLoader
 from zenml import step
 
 from src.config import DataConfig
-from src.data.dataset import DatasetBundle
-from src.evaluators import EvaluateModelOutput, Evaluator
-from src.materializers import EvaluateModelOutputMaterializer
+from src.evaluators import Evaluator
 from src.models.resnet18 import AnimalClassifierResNet18
 
 LOGGER = logging.getLogger(__name__)
@@ -39,12 +38,12 @@ def _find_config_file(filename: str) -> Path:
 @step(
     enable_cache=False,
     experiment_tracker="mlflow_tracker",
-    output_materializers=EvaluateModelOutputMaterializer,
+    # output_materializers=EvaluateModelOutputMaterializer,
 )
 def evaluate_model(
     model: AnimalClassifierResNet18,
-    data_bundle: DatasetBundle,
-) -> EvaluateModelOutput:
+    test_loader: DataLoader,
+) -> Tuple[float, float, float, float]:
     """
     Evaluate the model on the test data.
 
@@ -66,35 +65,12 @@ def evaluate_model(
         EvaluateModelOutput: Evaluation metrics containing accuracy, precision, recall, and f1 score
     """
 
-    config_path = _find_config_file("test_config.yaml")
+    config_path = _find_config_file("config.yaml")
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
         data_config = DataConfig(**config["data"])
 
     evaluator = Evaluator()
-
-    # num_classes = len(data_bundle.label_names)
-
-    # model = AnimalClassifierResNet18(
-    #     num_classes=num_classes,
-    #     optimizer=train_config.optimizer,
-    #     pretrained=False,  # We're loading trained weights
-    #     lr=train_config.lr,
-    #     max_lr=train_config.max_lr,
-    #     epochs=train_config.epochs,
-    #     device=train_config.device,
-    #     train_loader=None,  # Not needed for evaluation
-    #     class_weights=None,
-    # )
-    # model.load(Path(trained_model.local_path))
-
-    test_loader = DataLoader(
-        data_bundle.test,
-        batch_size=data_config.batch_size,
-        shuffle=False,
-        num_workers=data_config.num_workers,
-        pin_memory=True,
-    )
 
     LOGGER.info("Generating predictions on test data...")
     try:
@@ -131,7 +107,12 @@ def evaluate_model(
         )
 
         LOGGER.info("Evaluation completed successfully.")
-        return metrics
+        return (
+            metrics.accuracy,
+            metrics.precision,
+            metrics.recall,
+            metrics.f1,
+        )
     except Exception as e:
         LOGGER.error(
             "Exception %s occurred in evaluate_model step: %s",

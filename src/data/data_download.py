@@ -16,8 +16,10 @@ LOGGER = logging.getLogger(__name__)
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Download images from URLs.")
-    parser.add_argument("--data_path", type=Path, default=Path("data/data.csv"))
-    parser.add_argument("--save_dir", type=Path, default=Path("data/raw/images"))
+    parser.add_argument(
+        "--data_path", type=Path, default=Path("data/data_existing_image_paths.csv")
+    )
+    parser.add_argument("--save_dir", type=Path, default=Path("data/new_raw/images"))
     parser.add_argument("--uuid_column", type=str, default="uuid")
     parser.add_argument("--image_url_column", type=str, default="image_url")
     parser.add_argument("--plot_save_dir", type=Path, default=Path("data/raw/plots"))

@@ -12,6 +12,7 @@ import pandas as pd
 import torch
 import torchvision.transforms as transforms
 from PIL import Image
+from pydantic import BaseModel, Field
 from sklearn.model_selection import train_test_split
 from torch.utils.data import DataLoader, Dataset
 
@@ -48,9 +49,6 @@ class AnimalDataset(Dataset):
         cache_dir (Optional[Path]): A directory to cache the images.
     """
 
-    _MAX_DOWNLOAD_RETRIES = 1
-    _RETRY_BACKOFF_SECONDS = 2.0
-
     def __init__(
         self,
         records: List[ImageRecord],
@@ -81,13 +79,40 @@ class AnimalDataset(Dataset):
         return Image.open(image_path).convert("RGB")
 
 
-@dataclass
-class DatasetBundle:
-    train: AnimalDataset
-    validation: AnimalDataset
-    test: AnimalDataset
-    label_names: List[str]
-    label_ids: List[int]
+class DatasetBundle(BaseModel):
+    """
+    Dataset bundle.
+
+    Args:
+        train (AnimalDataset): The train dataset.
+        validation (AnimalDataset): The validation dataset.
+        test (AnimalDataset): The test dataset.
+        label_names (List[str]): The label names.
+        label_ids (List[int]): The label IDs.
+    """
+
+    train: AnimalDataset = Field(..., description="The train dataset.")
+    validation: AnimalDataset = Field(..., description="The validation dataset.")
+    test: AnimalDataset = Field(..., description="The test dataset.")
+    label_names: List[str] = Field(..., description="The label names.")
+    label_ids: List[int] = Field(..., description="The label IDs.")
+
+
+# class DataLoadersBundle(BaseModel):
+#     """
+#     Data loaders bundle.
+
+#     Args:
+#         train_dataloader (DataLoader): The train dataloader.
+#         validation_dataloader (DataLoader): The validation dataloader.
+#         test_dataloader (DataLoader): The test dataloader.
+#     """
+
+#     train_dataloader: DataLoader = Field(..., description="The train dataloader.")
+#     validation_dataloader: DataLoader = Field(
+#         ..., description="The validation dataloader."
+#     )
+#     test_dataloader: DataLoader = Field(..., description="The test dataloader.")
 
 
 def clean_and_prepare_data(
@@ -309,6 +334,8 @@ def prepare_data_for_training(
         config.image_cache_dir,
     )
 
+    # return train_dataset, val_dataset, test_dataset
+
     return DatasetBundle(
         train=train_dataset,
         validation=val_dataset,
@@ -346,9 +373,9 @@ def build_data_loaders(
         pin_memory=True,
     )
     return {
-        "train": train_loader,
-        "validation": val_loader,
-        "test": test_loader,
+        "train_dataloader": train_loader,
+        "validation_dataloader": val_loader,
+        "test_dataloader": test_loader,
     }
 
 

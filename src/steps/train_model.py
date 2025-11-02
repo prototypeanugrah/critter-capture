@@ -5,10 +5,11 @@ import mlflow
 import torch
 import yaml
 from mlflow.models import infer_signature
+from torch.utils.data import DataLoader
 from zenml import step
+from zenml.integrations.pytorch.materializers import PyTorchModuleMaterializer
 
 from src.config import DataConfig, TrainConfig
-from src.data.dataset import DatasetBundle, build_data_loaders
 from src.models.resnet18 import AnimalClassifierResNet18
 
 LOGGER = logging.getLogger(__name__)
@@ -33,14 +34,48 @@ def _find_config_file(filename: str) -> Path:
     return Path(filename)
 
 
+def calculate_mfb_class_weights(
+    train_dataloader: DataLoader,
+    num_classes: int,
+) -> torch.Tensor:
+    """
+    Calculate Median Frequency Balancing class weights from training data.
+
+    Args:
+        train_dataloader: Training dataloader (NOT validation or test)
+        num_classes: Number of classes
+
+    Returns:
+        torch.Tensor: Class weights for each class
+    """
+    # Count samples per class in TRAINING SET ONLY
+    class_counts = torch.zeros(num_classes, dtype=torch.long)
+
+    for _, labels in train_dataloader:
+        for label in labels:
+            class_counts[label] += 1
+
+    # Calculate median frequency
+    median_freq = torch.median(class_counts.float())
+
+    # Calculate weights: weight_i = median_freq / freq_i
+    class_weights = median_freq / class_counts.float()
+
+    # Handle any zero counts (shouldn't happen in practice with good data)
+    class_weights[class_counts == 0] = 0.0
+
+    return class_weights
+
+
 @step(
-    # enable_cache=False,
+    output_materializers=PyTorchModuleMaterializer,
     experiment_tracker="mlflow_tracker",
-    # output_materializers=TrainedModelArtifactMaterializer,
+    enable_cache=False,
 )
 def train_model(
-    data_bundle: DatasetBundle,
-) -> torch.nn.Module:
+    train_dataloader: DataLoader,
+    validation_dataloader: DataLoader,
+) -> AnimalClassifierResNet18:
     """
     Train the model on the prepared data.
 
@@ -63,7 +98,8 @@ def train_model(
     LOGGER.info("Building data loaders...")
 
     LOGGER.info("Preparing data for training...")
-    config_path = _find_config_file("test_config.yaml")
+    config_file = "config.yaml"
+    config_path = _find_config_file(config_file)
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
         data_config = DataConfig(**config["data"])
@@ -71,32 +107,31 @@ def train_model(
 
     mlflow.log_params(train_config.model_dump(mode="json"))
 
-    loaders = build_data_loaders(
-        data_bundle,
-        batch_size=data_config.batch_size,
-        num_workers=data_config.num_workers,
-    )
-
     LOGGER.info(
         "Initializing model with %d classes...",
-        len(data_bundle.label_names),
+        data_config.num_classes,
+    )
+
+    class_weights = calculate_mfb_class_weights(
+        train_dataloader=train_dataloader,
+        num_classes=data_config.num_classes,
     )
     model = AnimalClassifierResNet18(
-        num_classes=len(data_bundle.label_names),
+        num_classes=data_config.num_classes,
         optimizer=train_config.optimizer,
         pretrained=train_config.pretrained,
         lr=train_config.lr,
         max_lr=train_config.max_lr,
         epochs=train_config.epochs,
         device=train_config.device,
-        train_loader=loaders["train"],
-        class_weights=None,
+        train_loader=train_dataloader,
+        class_weights=class_weights,
     )
 
     LOGGER.info("Starting model training...")
     model.fit(
-        train_loader=loaders["train"],
-        val_loader=loaders["validation"],
+        train_loader=train_dataloader,
+        val_loader=validation_dataloader,
         save_dir=train_config.save_dir,
         save_best_only=train_config.save_best_only,
     )
@@ -130,23 +165,17 @@ def train_model(
         "Logging trained model to MLflow at artifact path '%s'",
         artifact_path,
     )
-    mlflow.pytorch.log_model(
+    model_info = mlflow.pytorch.log_model(
         pytorch_model=model,
         artifact_path=artifact_path,
         input_example=example_input_numpy,
         signature=signature,
         registered_model_name=train_config.mlflow_model_name,
     )
-    # # Use model registry URI instead of artifact URI for deployment
-    # # This ensures we reference the registered model version, not the run artifact
-    # mlflow_model_uri = f"models:/{train_config.mlflow_model_name}/latest"
-    # LOGGER.info("Model logged to MLflow with URI %s", mlflow_model_uri)
 
-    # LOGGER.info("Model training completed.")
-    # return TrainedModelArtifact(
-    #     model=model.model,
-    #     local_path=model_path,
-    #     mlflow_model_uri=mlflow_model_uri,
-    # )
+    version = model_info.registered_model_version
+    config["inference"]["model_version"] = version
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(config, f)
 
     return model

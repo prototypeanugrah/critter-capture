@@ -26,7 +26,7 @@ def run_deployment() -> None:
     service = model_deployer.find_model_server(
         pipeline_name="deployment_pipeline",
         pipeline_step_name="mlflow_model_deployer_step",
-        running=True,
+        running=False,
     )
 
     if service:

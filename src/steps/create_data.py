@@ -1,13 +1,15 @@
 import logging
 from pathlib import Path
+from typing import Tuple
 
 import mlflow
 import yaml
+from torch.utils.data import DataLoader
 from zenml import step
+from zenml.integrations.pytorch.materializers import PyTorchDataLoaderMaterializer
 
 from src.config import DataConfig
-from src.data.dataset import DatasetBundle, prepare_data_for_training
-from src.materializers import DatasetBundleMaterializer
+from src.data.dataset import build_data_loaders, prepare_data_for_training
 
 LOGGER = logging.getLogger(__name__)
 
@@ -32,11 +34,11 @@ def _find_config_file(filename: str) -> Path:
 
 
 @step(
-    # enable_cache=False,
+    enable_cache=False,
     experiment_tracker="mlflow_tracker",
-    output_materializers=DatasetBundleMaterializer,
+    output_materializers=PyTorchDataLoaderMaterializer,
 )
-def prepare_data_step() -> DatasetBundle:
+def load_data() -> Tuple[DataLoader, DataLoader, DataLoader]:
     """
     Prepare data for training by loading, cleaning, and splitting into train/val/test sets.
 
@@ -53,8 +55,9 @@ def prepare_data_step() -> DatasetBundle:
         DatasetBundle: Bundle containing train, validation, and test datasets
     """
 
+    config_file = "config.yaml"
     LOGGER.info("Preparing data for training...")
-    config_path = _find_config_file("test_config.yaml")
+    config_path = _find_config_file(config_file)
     LOGGER.info("Loading config from %s", config_path)
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
@@ -62,13 +65,30 @@ def prepare_data_step() -> DatasetBundle:
 
     mlflow.log_params(data_config.model_dump(mode="json"))
 
-    data_bundle = prepare_data_for_training(data_config)
+    dataset_bundle = prepare_data_for_training(data_config)
+    dataloader = build_data_loaders(
+        dataset_bundle,
+        batch_size=data_config.batch_size,
+        num_workers=data_config.num_workers,
+    )
+
+    num_classes = len(dataset_bundle.label_names)
+    # add num_classes to the config
+    config["data"]["num_classes"] = num_classes
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(config, f)
+
+    # print(config)
 
     LOGGER.info(
         "Data preparation complete. Train: %d, Val: %d, Test: %d samples",
-        len(data_bundle.train),
-        len(data_bundle.validation),
-        len(data_bundle.test),
+        len(dataloader["train_dataloader"]),
+        len(dataloader["validation_dataloader"]),
+        len(dataloader["test_dataloader"]),
     )
 
-    return data_bundle
+    return (
+        dataloader["train_dataloader"],
+        dataloader["validation_dataloader"],
+        dataloader["test_dataloader"],
+    )

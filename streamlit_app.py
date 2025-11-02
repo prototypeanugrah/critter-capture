@@ -16,16 +16,30 @@ from zenml.integrations.mlflow.model_deployers.mlflow_model_deployer import (
     MLFlowModelDeployer,
 )
 
-from src.config import load_config
+from src.config import DataConfig, InferenceConfig, TrainConfig
 from src.data.dataloader import build_transforms
 
 LOGGER = logging.getLogger(__name__)
 
 
 @st.cache_resource
-def get_pipeline_config(config_path: str):
-    pipeline_config = load_config(Path(config_path))
-    return pipeline_config
+def _find_config_file(filename: str) -> Path:
+    """Find the config.yaml file in common locations."""
+    # Try current directory first (for temp files from deploy script)
+    if Path(filename).exists():
+        return Path(filename)
+
+    # Try project root
+    project_root = Path(__file__).parent.parent.parent
+    if (project_root / filename).exists():
+        return project_root / filename
+
+    # Try src/steps/config.yaml
+    if (project_root / "src" / "steps" / filename).exists():
+        return project_root / "src" / "steps" / filename
+
+    # Default fallback
+    return Path(filename)
 
 
 def load_label_names(data_config) -> Tuple[List[int], Dict[int, str]]:
@@ -141,16 +155,13 @@ def main() -> None:
         "Upload an image and get predictions from the latest deployed MLflow model."
     )
 
-    config_path = "config.yaml"
-
-    try:
-        pipeline_config = get_pipeline_config(config_path)
-    except Exception as exc:
-        st.error(f"Failed to load configuration: {exc}")
-        return
-
-    data_config = pipeline_config.data
-    inference_config = pipeline_config.inference
+    config_file = "config.yaml"
+    config_path = _find_config_file(config_file)
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+        data_config = DataConfig(**config["data"])
+        train_config = TrainConfig(**config["train"])
+        inference_config = InferenceConfig(**config["inference"])
 
     try:
         label_ids, id_to_name = load_label_names(data_config)
@@ -174,11 +185,7 @@ def main() -> None:
         st.error(f"Unable to open the uploaded image: {exc}")
         return
 
-    use_direct_load = st.sidebar.checkbox(
-        "Load model directly (bypass deployment service)"
-    )
-
-    model_uri = "mlruns/models/animal-classifier-resnet50/version-3"
+    model_uri = f"mlruns/models/{train_config.mlflow_model_name}/version-{inference_config.model_version}"
     with open(model_uri + "/meta.yaml", "r", encoding="utf-8") as f:
         model_meta = yaml.safe_load(f)
 
@@ -191,41 +198,20 @@ def main() -> None:
 
     st.image(image, caption="Uploaded Image")
 
-    with st.spinner("Loading model and making prediction..."):
-        image_array = prepare_image(image, data_config.image_size)
+    image_array = prepare_image(image, data_config.image_size)
 
-        if use_direct_load:
-            # Load model directly
-            try:
-                model = load_model_directly(
-                    # model_path=model_path,
-                    # run_id=run_id,
-                    artifact_path=artifact_path,
-                )
-                predictions = predict_with_model(model, image_array)
-            except Exception as exc:
-                st.error(f"Failed to load model or make prediction: {exc}")
-                return
-        else:
-            # Use existing deployment service approach
-            service = fetch_prediction_service(
-                pipeline_name=inference_config.pipeline_name,
-                step_name=inference_config.pipeline_step_name,
-                running=inference_config.running,
-                wait_seconds=inference_config.service_wait_seconds,
-            )
-
-            if service is None:
-                st.error(
-                    "No running MLflow prediction service was found. Run the deployment pipeline first."
-                )
-                return
-
-            try:
-                predictions = np.asarray(service.predict(image_array))
-            except Exception as exc:
-                st.error(f"Prediction request failed: {exc}")
-                return
+    # Load model directly
+    try:
+        model = load_model_directly(
+            # model_path=model_path,
+            # run_id=run_id,
+            artifact_path=artifact_path,
+        )
+        predictions = predict_with_model(model, image_array)
+    except Exception as exc:
+        st.error(f"Failed to load model or make prediction: {exc}")
+        predictions = None
+        return
 
     if predictions.ndim != 2 or predictions.shape[1] == 0:
         st.error("Prediction response has unexpected shape.")
@@ -244,13 +230,6 @@ def main() -> None:
     st.success(
         f"Predicted class: **{predicted_label}** ({confidence * 100:.2f}% confidence)"
     )
-
-    st.subheader("Raw probabilities")
-    prob_table = {
-        id_to_name.get(label_id, str(label_id)): f"{prob * 100:.2f}%"
-        for label_id, prob in zip(label_ids, probabilities)
-    }
-    st.json(prob_table)
 
 
 if __name__ == "__main__":

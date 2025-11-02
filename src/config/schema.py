@@ -75,14 +75,17 @@ class DataConfig(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
     batch_size: int = Field(128, ge=1, description="Batch size for dataloader.")
+    num_classes: int = Field(
+        None, ge=1, description="Number of classes in the dataset."
+    )
 
 
 class TrainConfig(BaseModel):
     """Training configuration."""
 
-    model_name: str = Field("resnet18", description="Name of the model to train.")
+    model_name: str = Field("resnet50", description="Name of the model to train.")
     mlflow_model_name: str = Field(
-        "animal-classifier-resnet18",
+        "animal-classifier-resnet50",
         description="Registered MLflow model name used for deployment updates.",
     )
     optimizer: str = Field("adamw", description="Optimizer to use.")
@@ -134,6 +137,9 @@ class InferenceConfig(BaseModel):
         20,
         ge=1,
         description="Time to wait for the MLflow service to become ready.",
+    )
+    model_version: Optional[int] = Field(
+        1, ge=1, description="Version of the model to use for inference."
     )
 
 

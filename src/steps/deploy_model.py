@@ -2,10 +2,10 @@ import logging
 from pathlib import Path
 
 import yaml
+from zenml.materializers import BuiltInMaterializer
 from zenml.steps import step
 
 from src.config import EvaluationConfig
-from src.evaluators import EvaluateModelOutput
 
 LOGGER = logging.getLogger(__name__)
 
@@ -29,9 +29,16 @@ def _find_config_file(filename: str) -> Path:
     return Path(filename)
 
 
-@step(enable_cache=False)
+@step(
+    output_materializers=BuiltInMaterializer,
+    enable_cache=False,
+    experiment_tracker="mlflow_tracker",
+)
 def deployment_trigger(
-    metrics: EvaluateModelOutput,
+    accuracy: float,
+    precision: float,
+    recall: float,
+    f1: float,
 ) -> bool:
     """Determine if the evaluated model is good enough to deploy.
 
@@ -42,30 +49,30 @@ def deployment_trigger(
         bool: True to deploy the model, False otherwise.
     """
 
-    config_path = _find_config_file("test_config.yaml")
+    config_path = _find_config_file("config.yaml")
     with open(config_path, "r", encoding="utf-8") as f:
         config = yaml.safe_load(f)
         evaluation_config = EvaluationConfig(**config["evaluation"])
 
-    precision_threshold_met = metrics.precision >= evaluation_config.min_precision
-    recall_threshold_met = metrics.recall >= evaluation_config.min_recall
-    f1_threshold_met = metrics.f1 >= evaluation_config.min_f1
-    accuracy_threshold_met = metrics.accuracy >= evaluation_config.min_accuracy
+    precision_threshold_met = precision >= evaluation_config.min_precision
+    recall_threshold_met = recall >= evaluation_config.min_recall
+    f1_threshold_met = f1 >= evaluation_config.min_f1
+    accuracy_threshold_met = accuracy >= evaluation_config.min_accuracy
 
     LOGGER.info(
         "Deployment gate results - precision: %.4f (>= %.4f: %s), "
         "recall: %.4f (>= %.4f: %s), f1: %.4f (>= %.4f: %s), "
         "accuracy: %.4f (>= %.4f: %s)",
-        metrics.precision,
+        precision,
         evaluation_config.min_precision,
         precision_threshold_met,
-        metrics.recall,
+        recall,
         evaluation_config.min_recall,
         recall_threshold_met,
-        metrics.f1,
+        f1,
         evaluation_config.min_f1,
         f1_threshold_met,
-        metrics.accuracy,
+        accuracy,
         evaluation_config.min_accuracy,
         accuracy_threshold_met,
     )

@@ -1,40 +1,39 @@
 data:
-  csv_path: "data/data_filtered.csv"
-  uuid_column: "uuid"
-  image_url_column: "image_url"
-  label_column: "taxon_id"
-  label_names_column: "common_name"
-  keep_min_samples_per_label: 10
-  validation_size: 0.15
-  test_size: 0.15
-  num_workers: 4
-  image_size: 224
   batch_size: 256
-  image_cache_dir: "data/raw/images"
+  csv_path: data/data_filtered.csv
+  image_cache_dir: data/raw/images
+  image_path_column: image_path
+  image_size: 224
+  image_url_column: image_url
+  keep_min_samples_per_label: 10
+  label_column: taxon_id
+  label_names_column: common_name
+  num_classes: 180
+  num_workers: 4
   seed: 42
-
-train:
-  model_name: "resnet18"
-  mlflow_model_name: "animal-classifier-resnet18"
-  optimizer: "adamw"
-  scheduler: "onecyclelr"
-  lr: 0.0001
-  max_lr: 0.0001
-  epochs: 5
-  device: "cuda"
-  pretrained: true
-  save_dir: "models"
-  save_best_only: true
-
+  test_size: 0.15
+  uuid_column: uuid
+  validation_size: 0.15
 evaluation:
+  min_accuracy: 0.05
+  min_f1: 0.05
   min_precision: 0.05
   min_recall: 0.05
-  min_f1: 0.05
-  min_accuracy: 0.05
-
 inference:
   input_image_path: null
-  pipeline_name: "deployment_pipeline"
-  pipeline_step_name: "mlflow_model_deployer_step"
+  pipeline_name: deployment_pipeline
+  pipeline_step_name: mlflow_model_deployer_step
   running: false
   service_wait_seconds: 20
+train:
+  device: cuda
+  epochs: 5
+  lr: 0.0001
+  max_lr: 0.0001
+  mlflow_model_name: animal-classifier-resnet18
+  model_name: resnet18
+  optimizer: adamw
+  pretrained: true
+  save_best_only: true
+  save_dir: models
+  scheduler: onecyclelr

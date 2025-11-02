@@ -9,7 +9,7 @@ data:
   label_column: taxon_id
   label_names_column: common_name
   num_classes: 387
-  num_workers: 4
+  num_workers: 6
   seed: 42
   test_size: 0.15
   uuid_column: uuid
@@ -21,16 +21,16 @@ evaluation:
   min_recall: 0.05
 inference:
   input_image_path: null
-  model_version: 3
+  model_version: 1
   pipeline_name: deployment_pipeline
   pipeline_step_name: mlflow_model_deployer_step
   running: false
   service_wait_seconds: 20
 train:
   device: cuda
-  epochs: 50
+  epochs: 25
   lr: 1.0e-05
-  max_lr: 0.001
+  max_lr: 0.0001
   mlflow_model_name: animal-classifier-resnet50
   model_name: resnet50
   optimizer: adamw

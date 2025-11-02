@@ -1,15 +1,12 @@
 from zenml import pipeline
-from zenml.config import DockerSettings
-from zenml.integrations.constants import MLFLOW
 
-from src.config import DataConfig, TrainConfig
-from src.pipelines._shared import run_training_flow
-
-docker_settings = DockerSettings(required_integrations=[MLFLOW])
+from src.steps.create_data import load_data
+from src.steps.evaluate_model import evaluate_model
+from src.steps.train_model import train_model
 
 
-@pipeline(enable_cache=False, settings={"docker": docker_settings})
-def train_pipeline(data_config: DataConfig, train_config: TrainConfig):
+@pipeline(enable_cache=False, experiment_tracker="mlflow_tracker")
+def train_pipeline():
     """
     Complete training pipeline for the animal classifier.
 
@@ -28,4 +25,17 @@ def train_pipeline(data_config: DataConfig, train_config: TrainConfig):
         viewed in the MLflow UI.
     """
 
-    run_training_flow(data_config, train_config)
+    # Load data
+    train_dataloader, validation_dataloader, test_dataloader = load_data()
+
+    # Train model
+    model = train_model(
+        train_dataloader=train_dataloader,
+        validation_dataloader=validation_dataloader,
+    )
+
+    # Evaluate model
+    accuracy, precision, recall, f1 = evaluate_model(
+        model=model,
+        test_loader=test_dataloader,
+    )

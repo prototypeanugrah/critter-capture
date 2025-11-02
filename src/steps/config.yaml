@@ -20,8 +20,9 @@ evaluation:
   min_precision: 0.05
   min_recall: 0.05
 inference:
-  input_image_path: null
+  input_image_path: /Users/anugrah/Desktop/Projects/animal-classifier-mlops/data/new_raw/images/0a0aa06a-fcdd-4194-8f33-609d05833b8d.jpg
   model_version: 1
+  model_path: models/best_model.pth
   pipeline_name: deployment_pipeline
   pipeline_step_name: mlflow_model_deployer_step
   running: false

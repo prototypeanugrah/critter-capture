@@ -1,35 +1,49 @@
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Tuple
 
 import numpy as np
+import torch
+import yaml
 from PIL import Image
-from zenml.steps import BaseParameters, step
-from zenml.integrations.mlflow.model_deployers.mlflow_model_deployer import (
-    MLFlowModelDeployer,
-)
-from zenml.integrations.mlflow.services import MLFlowDeploymentService
+from zenml.steps import step
 
-from src.config import DataConfig, InferenceConfig
+from src.config import DataConfig, InferenceConfig, TrainConfig
 from src.data.dataloader import build_transforms
+from src.models.resnet18 import AnimalClassifierResNet18
 
 LOGGER = logging.getLogger(__name__)
 
 
-class MLFlowDeploymentLoaderStepParameters(BaseParameters):
-    """Parameters used to locate a deployed MLflow prediction service."""
+def _find_config_file(filename: str) -> Path:
+    """Find the config.yaml file in common locations."""
+    # Try current directory first (for temp files from deploy script)
+    if Path(filename).exists():
+        return Path(filename)
 
-    pipeline_name: str
-    step_name: str
-    running: bool = True
+    # Try project root
+    project_root = Path(__file__).parent.parent.parent
+    if (project_root / filename).exists():
+        return project_root / filename
+
+    # Try src/steps/config.yaml
+    if (project_root / "src" / "steps" / filename).exists():
+        return project_root / "src" / "steps" / filename
+
+    # Default fallback
+    return Path(filename)
 
 
 @step(enable_cache=False)
-def load_image_for_inference(
-    data_config: DataConfig,
-    inference_config: InferenceConfig,
-) -> np.ndarray:
+def load_image_for_inference() -> np.ndarray:
     """Load a single image from disk and convert it into a numpy array."""
+
+    config_path = _find_config_file("config.yaml")
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+        data_config = DataConfig(**config["data"])
+        inference_config = InferenceConfig(**config["inference"])
+
     image_path = inference_config.input_image_path
     if image_path is None:
         raise ValueError(
@@ -48,57 +62,56 @@ def load_image_for_inference(
 
 
 @step(enable_cache=False)
-def prediction_service_loader(
-    params: MLFlowDeploymentLoaderStepParameters,
-    inference_config: InferenceConfig,
-) -> Optional[MLFlowDeploymentService]:
-    """Retrieve the MLflow prediction service deployed by the pipeline."""
-    model_deployer = MLFlowModelDeployer.get_active_model_deployer()
-    services = model_deployer.find_model_server(
-        pipeline_name=params.pipeline_name,
-        pipeline_step_name=params.step_name,
-        running=params.running,
-    )
-
-    if not services:
-        LOGGER.warning(
-            "No MLflow prediction service deployed by step '%s' in pipeline '%s'.",
-            params.step_name,
-            params.pipeline_name,
-        )
-        return None
-
-    service = services[0]
-    try:
-        service.start(timeout=inference_config.service_wait_seconds)
-    except Exception:  # pragma: no cover - already running or cannot start
-        LOGGER.debug("Prediction service already running.")
-
-    try:
-        if hasattr(service, "wait_for_service_ready"):
-            service.wait_for_service_ready(timeout=inference_config.service_wait_seconds)
-        else:
-            service.wait(timeout_seconds=inference_config.service_wait_seconds)
-    except Exception as exc:  # pragma: no cover - external service failure
-        LOGGER.warning("Prediction service did not report ready state: %s", exc)
-
-    return service
-
-
-@step(enable_cache=False)
 def predictor(
-    service: Optional[MLFlowDeploymentService],
     image_array: np.ndarray,
-) -> np.ndarray:
-    """Run an inference request via the MLflow service."""
-    if service is None:
-        raise RuntimeError(
-            "No running MLflow service is available. Run the deployment pipeline first."
+) -> Tuple[int, float]:
+    """Run an inference request on the model and return the predicted index and confidence."""
+
+    config_path = _find_config_file("config.yaml")
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = yaml.safe_load(f)
+        data_config = DataConfig(**config["data"])
+        train_config = TrainConfig(**config["train"])
+        inference_config = InferenceConfig(**config["inference"])
+
+    model_path = Path(inference_config.model_path)
+    if model_path is None or not model_path.exists():
+        raise ValueError(
+            f"Model path not found: {model_path}. "
+            "Set inference.model_path in the configuration before running inference."
         )
 
-    LOGGER.info(
-        "Requesting prediction from MLflow service at %s.",
-        service.prediction_url,
+    # Load the state dict
+    state_dict = torch.load(model_path, map_location=torch.device("cpu"))
+
+    # Instantiate the model with the same parameters used during training
+    model = AnimalClassifierResNet18(
+        num_classes=data_config.num_classes,
+        optimizer=train_config.optimizer,
+        pretrained=train_config.pretrained,
+        lr=train_config.lr,
+        max_lr=train_config.max_lr,
+        epochs=train_config.epochs,
+        device="cpu",  # Use CPU for inference
+        train_loader=None,  # Not needed for inference
+        class_weights=None,  # Not needed for inference
     )
-    prediction = service.predict(image_array)
-    return np.asarray(prediction)
+
+    # Load the state dict into the model
+    model.model.load_state_dict(state_dict)
+
+    # Convert numpy array to tensor
+    image_tensor = torch.from_numpy(image_array).float()
+
+    model.model.eval()
+    with torch.no_grad():
+        prediction = model.model(image_tensor)
+
+    probabilities = torch.nn.functional.softmax(prediction, dim=1)
+    probabilities = probabilities[0]
+    predicted_index = int(np.argmax(probabilities))
+
+    confidence = float(probabilities[predicted_index])
+    LOGGER.info("Predicted index: %s", predicted_index)
+    LOGGER.info("Confidence: %s", confidence)
+    return predicted_index, confidence

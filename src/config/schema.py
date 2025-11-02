@@ -141,6 +141,10 @@ class InferenceConfig(BaseModel):
     model_version: Optional[int] = Field(
         1, ge=1, description="Version of the model to use for inference."
     )
+    model_path: Optional[Path] = Field(
+        Path("models/best_model.pth"),
+        description="Path to the model to use for inference.",
+    )
 
 
 class PipelineConfig(BaseModel):

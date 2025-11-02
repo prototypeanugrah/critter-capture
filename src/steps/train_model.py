@@ -137,6 +137,10 @@ def train_model(
     )
 
     model_path = Path(train_config.save_dir) / "best_model.pth"
+    config["inference"]["model_path"] = model_path
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(config, f)
+
     LOGGER.info(
         "Loading best checkpoint from %s for MLflow logging",
         model_path,

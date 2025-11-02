@@ -35,6 +35,9 @@ class DataConfig(BaseModel):
         "common_name",
         description="Column containing human-readable label names.",
     )
+    image_path_column: str = Field(
+        "image_path", description="Column containing image paths."
+    )
     keep_min_samples_per_label: int = Field(
         10, ge=1, description="Minimum number of samples per label to keep."
     )

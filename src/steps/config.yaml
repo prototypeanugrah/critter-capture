@@ -4,6 +4,7 @@ data:
   image_url_column: "image_url"
   label_column: "taxon_id"
   label_names_column: "common_name"
+  image_path_column: "image_path"
   keep_min_samples_per_label: 10
   validation_size: 0.15
   test_size: 0.15
